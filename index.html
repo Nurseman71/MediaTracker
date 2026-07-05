@@ -1365,12 +1365,13 @@
 
         function exportToCsv() {
             if (collection.length === 0) return alert("Collection empty!");
-            const headers = ['Title', 'Creator', 'Year', 'Type', 'Genres', 'Format', 'Condition', 'Rating', 'Wishlist', 'Lent To', 'Date Lent', 'Due Back'];
+            const headers = ['Title', 'Creator', 'Year', 'Type', 'Genres', 'Format', 'Condition', 'Rating', 'Wishlist', 'Lent To', 'Date Lent', 'Due Back', 'Image URL', 'Description'];
             const rows = collection.map(item => [
                 item.title, item.creator, item.year, item.type,
                 (item.genres || []).join('; '), item.format || '', item.condition || '',
                 item.personalRating || 0, item.wishlist ? 'Yes' : 'No',
-                (item.loan && item.loan.borrower) || '', (item.loan && item.loan.lentDate) || '', (item.loan && item.loan.dueDate) || ''
+                (item.loan && item.loan.borrower) || '', (item.loan && item.loan.lentDate) || '', (item.loan && item.loan.dueDate) || '',
+                item.image || '', item.meta || ''
             ]);
             const csvContent = [headers, ...rows].map(row => row.map(csvField).join(',')).join('\r\n');
 
@@ -1485,7 +1486,8 @@
                     const idxTitle = col('Title'), idxCreator = col('Creator'), idxYear = col('Year'), idxType = col('Type'),
                           idxGenres = col('Genres'), idxFormat = col('Format'), idxCondition = col('Condition'),
                           idxRating = col('Rating'), idxWishlist = col('Wishlist'), idxLentTo = col('Lent To'),
-                          idxLentDate = col('Date Lent'), idxDueDate = col('Due Back');
+                          idxLentDate = col('Date Lent'), idxDueDate = col('Due Back'),
+                          idxImage = col('Image URL'), idxMeta = col('Description');
 
                     if (idxTitle === -1) { alert("Import failed: CSV must have a 'Title' column (use the same headers as the CSV export)."); return; }
 
@@ -1507,6 +1509,9 @@
                         const dueDate = idxDueDate !== -1 ? (r[idxDueDate] || '').trim() : '';
                         const format = idxFormat !== -1 ? (r[idxFormat] || '').trim() : '';
                         const condition = idxCondition !== -1 ? (r[idxCondition] || '').trim() : '';
+                        const rawImage = idxImage !== -1 ? (r[idxImage] || '').trim() : '';
+                        const image = isSafeImageUrl(rawImage) && rawImage ? rawImage : '';
+                        const meta = idxMeta !== -1 ? (r[idxMeta] || '').trim() : '';
 
                         // Match existing items by title+creator+type so re-importing an
                         // edited export updates them in place instead of duplicating.
@@ -1520,14 +1525,16 @@
                             existing.loanStatus = borrower;
                             if (idxYear !== -1 && r[idxYear]) existing.year = r[idxYear].trim();
                             if (genresStr) existing.genres = normalizeGenres(genresStr.split(';'));
+                            if (image) existing.image = image;
+                            if (meta) existing.meta = meta;
                             updated++;
                         } else {
                             collection.push({
                                 id: generateLocalId('csv'), type, title,
                                 creator: creator || 'Unknown',
                                 year: (idxYear !== -1 && r[idxYear]) ? r[idxYear].trim() : 'N/A',
-                                image: type === 'movie' ? 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300' : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300',
-                                meta: 'Imported from CSV.',
+                                image: image || (type === 'movie' ? 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300' : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300'),
+                                meta: meta || 'Imported from CSV.',
                                 genres: genresStr ? normalizeGenres(genresStr.split(';')) : (type === 'movie' ? ['Movie'] : ['Music']),
                                 personalRating: rating, loanStatus: borrower, loan: { borrower, lentDate, dueDate },
                                 wishlist, format, condition
