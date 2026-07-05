@@ -104,6 +104,10 @@
                     📂 Import
                     <input type="file" id="importFile" accept=".json" class="hidden">
                 </label>
+                <label class="flex-1 md:flex-none bg-slate-800 border border-slate-700 text-slate-300 text-sm px-4 py-2.5 rounded-xl cursor-pointer text-center backdrop-blur-md hover:bg-slate-700 transition-all flex items-center justify-center gap-1.5">
+                    📄 Import CSV
+                    <input type="file" id="importCsvFile" accept=".csv" class="hidden">
+                </label>
             </div>
         </header>
 
@@ -322,6 +326,9 @@
                                     ⭐ Add to Wishlist
                                 </button>
                             </div>
+                            <button onclick="openEditItemModal(currentDetailItemId)" class="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold text-xs py-2 rounded-lg transition-colors">
+                                ✏️ Edit Details
+                            </button>
                         </div>
                         <div id="previewApprovalContainer" class="hidden flex flex-col gap-2">
                             <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
@@ -347,7 +354,7 @@
     <div id="manualEntryModal" class="fixed inset-0 bg-slate-950/80 hidden z-50 flex items-center justify-center p-4 backdrop-blur-md" onclick="closeModal(event)">
         <div class="bg-slate-900 border border-slate-700/60 rounded-2xl max-w-md w-full shadow-2xl relative" onclick="event.stopPropagation()">
             <div class="p-5">
-                <h3 class="text-base font-black text-indigo-400 mb-3 border-b border-slate-800 pb-1.5">Add Custom Item Manually</h3>
+                <h3 id="manualEntryModalTitle" class="text-base font-black text-indigo-400 mb-3 border-b border-slate-800 pb-1.5">Add Custom Item Manually</h3>
                 <div class="flex flex-col gap-3">
                     <select id="manType" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-base text-white">
                         <option value="movie">Type: Movie</option>
@@ -386,7 +393,7 @@
                     </label>
                 </div>
                 <div class="flex gap-2 mt-4">
-                    <button onclick="saveManualEntry()" class="flex-grow bg-indigo-600 text-white font-bold text-xs py-2 rounded-lg">Add to Collection</button>
+                    <button onclick="saveManualEntry()" id="manualEntrySaveBtn" class="flex-grow bg-indigo-600 text-white font-bold text-xs py-2 rounded-lg">Add to Collection</button>
                     <button onclick="toggleModal('manualEntryModal', false)" class="bg-slate-800 text-slate-300 font-semibold text-xs py-2 px-4 rounded-lg">Cancel</button>
                 </div>
             </div>
@@ -827,13 +834,36 @@
             } catch(e) { alert("Error parsing music."); }
         }
 
-        // --- CUSTOM MANUAL ENTRY ---
+        // --- CUSTOM MANUAL ENTRY (also reused for editing existing items) ---
         function openManualEntryModal() {
+            editingItemId = null;
+            document.getElementById('manualEntryModalTitle').innerText = 'Add Custom Item Manually';
+            document.getElementById('manualEntrySaveBtn').innerText = 'Add to Collection';
             document.getElementById('manTitle').value = ''; document.getElementById('manCreator').value = '';
             document.getElementById('manYear').value = ''; document.getElementById('manGenre').value = '';
             document.getElementById('manDetails').value = ''; document.getElementById('manImage').value = '';
             document.getElementById('manFormat').value = ''; document.getElementById('manCondition').value = '';
             document.getElementById('manWishlist').checked = false;
+            toggleModal('manualEntryModal', true);
+        }
+
+        function openEditItemModal(id) {
+            const item = collection.find(i => i.id === id);
+            if (!item) return;
+            editingItemId = id;
+            document.getElementById('manualEntryModalTitle').innerText = 'Edit Item Details';
+            document.getElementById('manualEntrySaveBtn').innerText = 'Save Changes';
+            document.getElementById('manType').value = item.type;
+            document.getElementById('manTitle').value = item.title || '';
+            document.getElementById('manCreator').value = item.creator || '';
+            document.getElementById('manYear').value = item.year || '';
+            document.getElementById('manGenre').value = (item.genres || []).join(', ');
+            document.getElementById('manDetails').value = item.meta || '';
+            document.getElementById('manImage').value = item.image || '';
+            document.getElementById('manFormat').value = item.format || '';
+            document.getElementById('manCondition').value = item.condition || '';
+            document.getElementById('manWishlist').checked = !!item.wishlist;
+            toggleModal('detailsModal', false);
             toggleModal('manualEntryModal', true);
         }
 
@@ -855,18 +885,33 @@
                 return alert("Poster Image URL must start with http://, https://, or be empty.");
             }
 
-            const newItem = {
-                id: generateLocalId('man'), type: type, title: title,
-                creator: document.getElementById('manCreator').value.trim() || 'Unknown',
-                year: document.getElementById('manYear').value.trim() || 'N/A',
-                image: imgInput ? imgInput : (type === 'movie' ? 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300' : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300'),
-                meta: document.getElementById('manDetails').value.trim() || 'Manual custom archive entry parameters.',
-                genres: genresStr ? normalizeGenres(genresStr.split(',')) : (type === 'movie' ? ['Movie'] : ['Music']),
-                personalRating: 0, loanStatus: '', loan: { borrower: '', lentDate: '', dueDate: '' },
-                format: document.getElementById('manFormat').value, condition: document.getElementById('manCondition').value,
-                wishlist: document.getElementById('manWishlist').checked
-            };
-            collection.push(newItem); saveAndRender(); toggleModal('manualEntryModal', false);
+            const creator = document.getElementById('manCreator').value.trim() || 'Unknown';
+            const year = document.getElementById('manYear').value.trim() || 'N/A';
+            const image = imgInput ? imgInput : (type === 'movie' ? 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300' : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300');
+            const meta = document.getElementById('manDetails').value.trim() || 'Manual custom archive entry parameters.';
+            const genres = genresStr ? normalizeGenres(genresStr.split(',')) : (type === 'movie' ? ['Movie'] : ['Music']);
+            const format = document.getElementById('manFormat').value;
+            const condition = document.getElementById('manCondition').value;
+            const wishlist = document.getElementById('manWishlist').checked;
+
+            if (editingItemId) {
+                const existing = collection.find(i => i.id === editingItemId);
+                if (existing) {
+                    existing.type = type; existing.title = title; existing.creator = creator; existing.year = year;
+                    existing.image = image; existing.meta = meta; existing.genres = genres;
+                    existing.format = format; existing.condition = condition; existing.wishlist = wishlist;
+                    // Personal rating and loan info are intentionally left untouched here —
+                    // this form edits catalog details, not usage state.
+                }
+                editingItemId = null;
+            } else {
+                collection.push({
+                    id: generateLocalId('man'), type: type, title: title, creator: creator, year: year, image: image, meta: meta,
+                    genres: genres, personalRating: 0, loanStatus: '', loan: { borrower: '', lentDate: '', dueDate: '' },
+                    format: format, condition: condition, wishlist: wishlist
+                });
+            }
+            saveAndRender(); toggleModal('manualEntryModal', false);
         }
 
         // Dedupes genres case-insensitively (so "rock" and "Rock" don't become two
@@ -1094,6 +1139,7 @@
         }
 
         let currentDetailItemId = null;
+        let editingItemId = null; // non-null while the Manual Entry modal is being used to edit an existing item
 
         function openLoanModalForItem(id, event) {
             if (event) event.stopPropagation();
@@ -1395,6 +1441,112 @@
                 } catch (err) { alert("Import failed: that file isn't valid JSON."); }
             };
             shadowReader.readAsText(file);
+        }
+
+        // Minimal RFC 4180 CSV parser: handles quoted fields, escaped ("") quotes,
+        // and commas/newlines inside quoted fields. Returns an array of row arrays.
+        function parseCsv(text) {
+            const rows = [];
+            let row = [];
+            let field = '';
+            let inQuotes = false;
+            for (let i = 0; i < text.length; i++) {
+                const char = text[i];
+                if (inQuotes) {
+                    if (char === '"') {
+                        if (text[i + 1] === '"') { field += '"'; i++; }
+                        else { inQuotes = false; }
+                    } else {
+                        field += char;
+                    }
+                } else {
+                    if (char === '"') { inQuotes = true; }
+                    else if (char === ',') { row.push(field); field = ''; }
+                    else if (char === '\r') { /* skip, \n handles the line break */ }
+                    else if (char === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+                    else { field += char; }
+                }
+            }
+            if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+            return rows.filter(r => r.length > 1 || (r.length === 1 && r[0] !== ''));
+        }
+
+        document.getElementById('importCsvFile').addEventListener('change', importFromCsv);
+        function importFromCsv(event) {
+            const file = event.target.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const rows = parseCsv(e.target.result);
+                    if (rows.length < 2) { alert("Import failed: CSV needs a header row plus at least one data row."); return; }
+
+                    const headers = rows[0].map(h => h.trim());
+                    const col = (headerName) => headers.indexOf(headerName);
+                    const idxTitle = col('Title'), idxCreator = col('Creator'), idxYear = col('Year'), idxType = col('Type'),
+                          idxGenres = col('Genres'), idxFormat = col('Format'), idxCondition = col('Condition'),
+                          idxRating = col('Rating'), idxWishlist = col('Wishlist'), idxLentTo = col('Lent To'),
+                          idxLentDate = col('Date Lent'), idxDueDate = col('Due Back');
+
+                    if (idxTitle === -1) { alert("Import failed: CSV must have a 'Title' column (use the same headers as the CSV export)."); return; }
+
+                    let added = 0, updated = 0, skipped = 0;
+                    for (let i = 1; i < rows.length; i++) {
+                        const r = rows[i];
+                        const title = (r[idxTitle] || '').trim();
+                        if (!title) { skipped++; continue; }
+
+                        const rawType = idxType !== -1 ? (r[idxType] || '').trim().toLowerCase() : '';
+                        const type = rawType === 'music' ? 'music' : 'movie'; // default to movie if missing/unrecognized
+                        const creator = idxCreator !== -1 ? (r[idxCreator] || '').trim() : '';
+                        const genresStr = idxGenres !== -1 ? (r[idxGenres] || '') : '';
+                        const ratingNum = idxRating !== -1 ? parseInt(r[idxRating], 10) : 0;
+                        const rating = (Number.isFinite(ratingNum) && ratingNum >= 0 && ratingNum <= 5) ? ratingNum : 0;
+                        const wishlist = idxWishlist !== -1 && (r[idxWishlist] || '').trim().toLowerCase() === 'yes';
+                        const borrower = idxLentTo !== -1 ? (r[idxLentTo] || '').trim() : '';
+                        const lentDate = idxLentDate !== -1 ? (r[idxLentDate] || '').trim() : '';
+                        const dueDate = idxDueDate !== -1 ? (r[idxDueDate] || '').trim() : '';
+                        const format = idxFormat !== -1 ? (r[idxFormat] || '').trim() : '';
+                        const condition = idxCondition !== -1 ? (r[idxCondition] || '').trim() : '';
+
+                        // Match existing items by title+creator+type so re-importing an
+                        // edited export updates them in place instead of duplicating.
+                        const matchKey = (t, c, ty) => `${t.toLowerCase()}|${c.toLowerCase()}|${ty}`;
+                        const existing = collection.find(item => matchKey(item.title, item.creator, item.type) === matchKey(title, creator, type));
+
+                        if (existing) {
+                            existing.format = format; existing.condition = condition;
+                            existing.personalRating = rating; existing.wishlist = wishlist;
+                            existing.loan = { borrower, lentDate, dueDate };
+                            existing.loanStatus = borrower;
+                            if (idxYear !== -1 && r[idxYear]) existing.year = r[idxYear].trim();
+                            if (genresStr) existing.genres = normalizeGenres(genresStr.split(';'));
+                            updated++;
+                        } else {
+                            collection.push({
+                                id: generateLocalId('csv'), type, title,
+                                creator: creator || 'Unknown',
+                                year: (idxYear !== -1 && r[idxYear]) ? r[idxYear].trim() : 'N/A',
+                                image: type === 'movie' ? 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300' : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300',
+                                meta: 'Imported from CSV.',
+                                genres: genresStr ? normalizeGenres(genresStr.split(';')) : (type === 'movie' ? ['Movie'] : ['Music']),
+                                personalRating: rating, loanStatus: borrower, loan: { borrower, lentDate, dueDate },
+                                wishlist, format, condition
+                            });
+                            added++;
+                        }
+                    }
+
+                    if (added === 0 && updated === 0) { alert("Import failed: no valid rows found (each row needs at least a Title)."); return; }
+
+                    runDataMigrationChecks();
+                    saveAndRender();
+                    alert(`CSV import complete: ${added} added, ${updated} updated${skipped > 0 ? `, ${skipped} skipped (missing title)` : ''}.`);
+                } catch (err) {
+                    console.error(err);
+                    alert("Import failed: couldn't parse that CSV file.");
+                }
+            };
+            reader.readAsText(file);
         }
 
         function showItemModal(item, isPreviewMode = false) {
