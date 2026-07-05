@@ -12,10 +12,27 @@
     <meta name="apple-mobile-web-app-title" content="Media Vault">
     <link rel="apple-touch-icon" href="icon-192.png">
     <link rel="icon" href="icon-192.png">
+    <!-- Content-Security-Policy: restricts the page to only the origins it actually
+         needs (Tailwind Play CDN, the pinned html5-qrcode CDN, OMDb/iTunes APIs, and
+         cover-art images from anywhere over https). 'unsafe-inline' is required for
+         script/style because the app is built with inline onclick handlers and the
+         Tailwind Play CDN injects styles at runtime — this CSP still blocks the app
+         from loading executable code or making network requests to any other origin. -->
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com;
+        style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;
+        img-src 'self' https: data: blob:;
+        connect-src 'self' https://www.omdbapi.com https://itunes.apple.com;
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self';
+    ">
     <!-- Tailwind CSS for Styling -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- HTML5 QR/Barcode Scanner Library -->
-    <script src="https://unpkg.com/html5-qrcode"></script>
+    <!-- HTML5 QR/Barcode Scanner Library (version pinned so the CDN can't silently
+         serve a different, unreviewed build later) -->
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" crossorigin="anonymous"></script>
     <style>
         html { font-size: 16px !important; -webkit-text-size-adjust: 100%; }
         ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -147,7 +164,7 @@
                     <span class="text-xs text-slate-400 font-bold uppercase tracking-wider">OMDb Key:</span>
                     <input id="omdbKey" type="text" placeholder="Paste Key" class="bg-slate-900 border border-slate-800 text-sm rounded-lg px-2.5 py-1 text-slate-300 w-28 focus:outline-none focus:ring-1 focus:ring-indigo-500">
                 </div>
-                <span class="text-xs text-slate-500 leading-none">Required for movies (<a href="http://www.omdbapi.com/apikey.aspx" target="_blank" class="underline hover:text-slate-400">omdbapi.com</a>)</span>
+                <span class="text-xs text-slate-500 leading-none">Required for movies (<a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener noreferrer" class="underline hover:text-slate-400">omdbapi.com</a>)</span>
             </div>
         </section>
 
@@ -259,7 +276,7 @@
                     </div>
                     <div id="modalActions" class="mt-3 pt-3 border-t border-slate-700/60">
                         <div id="imdbLinkContainer" class="hidden">
-                            <a id="imdbExternalLink" href="#" target="_blank" class="inline-flex items-center gap-1.5 text-xs font-bold bg-amber-500 text-slate-950 px-3 py-1.5 rounded-lg shadow-md">
+                            <a id="imdbExternalLink" href="#" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 text-xs font-bold bg-amber-500 text-slate-950 px-3 py-1.5 rounded-lg shadow-md">
                                 View on IMDb ↗
                             </a>
                         </div>
@@ -325,12 +342,62 @@
             });
         }
 
-        // --- SECURITY AND OBFUSCATED AUTH CONFIGURATION ---
-        const ENCRYPTED_PIN_HASH = "ODMwMw=="; 
+        // --- SECURITY AND AUTH CONFIGURATION ---
+        // NOTE ON THREAT MODEL: this whole app is static client-side code hosted
+        // publicly (e.g. GitHub Pages). Anyone can view-source or open DevTools and
+        // read this file directly, so no PIN scheme running entirely in the browser
+        // can stop a technically determined visitor — they can just read the hash
+        // check logic and call the unlock function themselves. This lock is only
+        // meant to stop a casual glance (someone picking up the device, or opening
+        // the tab) — not a real access-control boundary. If the data behind this
+        // needs genuine protection, it needs a server that checks the PIN itself.
+        //
+        // What we *did* improve here vs. plain base64:
+        //  - PIN is checked against a SHA-256 hash instead of a 1-line-reversible
+        //    base64 string, so it's not immediately readable at a glance in DevTools.
+        //  - Repeated wrong attempts are throttled with increasing lockout delays,
+        //    which slows down manual/scripted guessing against the 10,000 possible
+        //    4-digit codes (it does not make it cryptographically infeasible).
+        const PIN_SHA256_HASH = "4cf826dd75e4707108e654bbfca6bc83cb1d01fe9ed8bcfda4c116ee486be12e";
         let currentPinInput = "";
+        let pinFailCount = parseInt(localStorage.getItem('pinFailCount') || '0', 10);
+        let pinLockedUntil = parseInt(localStorage.getItem('pinLockedUntil') || '0', 10);
+
+        async function sha256Hex(text) {
+            if (window.crypto && window.crypto.subtle && window.isSecureContext) {
+                const data = new TextEncoder().encode(text);
+                const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+                return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+            }
+            // crypto.subtle needs a secure context (https:// or localhost). If this
+            // is being opened directly as a local file for testing, fall back to a
+            // simple non-cryptographic digest so the PIN screen still functions —
+            // this path is only reachable outside of the deployed HTTPS site.
+            let hash = 0;
+            for (let i = 0; i < text.length; i++) {
+                hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+            }
+            return 'fallback_' + hash.toString(16);
+        }
+
+        function remainingLockoutSeconds() {
+            return Math.max(0, Math.ceil((pinLockedUntil - Date.now()) / 1000));
+        }
+
+        function updatePinLockUi() {
+            const errorMsg = document.getElementById('authErrorMessage');
+            const remaining = remainingLockoutSeconds();
+            if (remaining > 0) {
+                errorMsg.innerText = `Too many attempts. Try again in ${remaining}s.`;
+                errorMsg.classList.remove('opacity-0');
+                return true;
+            }
+            return false;
+        }
 
         function pressPinKey(key) {
             const errorMsg = document.getElementById('authErrorMessage');
+            if (updatePinLockUi()) return; // still locked out, ignore keypresses
             errorMsg.classList.add('opacity-0');
 
             if (key === 'clear') {
@@ -351,20 +418,37 @@
             });
 
             if (currentPinInput.length === 4) {
-                setTimeout(() => {
-                    const runtimeInputHash = btoa(currentPinInput);
-                    
-                    if (runtimeInputHash === ENCRYPTED_PIN_HASH) {
+                const enteredPin = currentPinInput;
+                currentPinInput = "";
+                setTimeout(async () => {
+                    const runtimeInputHash = await sha256Hex(enteredPin);
+
+                    if (runtimeInputHash === PIN_SHA256_HASH) {
+                        pinFailCount = 0;
+                        localStorage.removeItem('pinFailCount');
+                        localStorage.removeItem('pinLockedUntil');
                         document.getElementById('authLockOverlay').classList.add('hidden');
-                        currentPinInput = "";
                     } else {
-                        errorMsg.classList.remove('opacity-0');
-                        currentPinInput = "";
+                        pinFailCount += 1;
+                        safeSetLocalStorage('pinFailCount', String(pinFailCount));
+                        if (pinFailCount >= 5) {
+                            // Exponential backoff: 30s, 60s, 120s, ... capped at 10 minutes.
+                            const lockoutMs = Math.min(30000 * Math.pow(2, pinFailCount - 5), 600000);
+                            pinLockedUntil = Date.now() + lockoutMs;
+                            safeSetLocalStorage('pinLockedUntil', String(pinLockedUntil));
+                        }
+                        if (!updatePinLockUi()) {
+                            errorMsg.innerText = "Incorrect Passcode entry.";
+                            errorMsg.classList.remove('opacity-0');
+                        }
                         dots.forEach(d => d.className = "pin-dot w-3.5 h-3.5 rounded-full border-2 border-slate-700 bg-transparent");
                     }
                 }, 150);
             }
         }
+
+        // On load, if a previous lockout is still active, reflect it immediately.
+        updatePinLockUi();
 
         // --- SYSTEM CORE STATES ---
         let collection = JSON.parse(localStorage.getItem('myMediaCollection')) || [];
@@ -630,12 +714,23 @@
             toggleModal('manualEntryModal', true);
         }
 
+        // Only allow http(s) links or inline data:image URIs for user-supplied poster
+        // art — blocks things like javascript: URIs from ever being stored/rendered.
+        function isSafeImageUrl(url) {
+            if (!url) return true; // empty is fine, falls back to the default artwork
+            return /^https?:\/\//i.test(url) || /^data:image\//i.test(url);
+        }
+
         function saveManualEntry() {
             const title = document.getElementById('manTitle').value.trim();
             if (!title) return alert("Title required!");
             const type = document.getElementById('manType').value;
             const genresStr = document.getElementById('manGenre').value.trim();
             const imgInput = document.getElementById('manImage').value.trim();
+
+            if (!isSafeImageUrl(imgInput)) {
+                return alert("Poster Image URL must start with http://, https://, or be empty.");
+            }
 
             const newItem = {
                 id: generateLocalId('man'), type: type, title: title,
@@ -961,6 +1056,7 @@
                             if (!item.id) item.id = generateLocalId(item.type === 'movie' ? 'imp' : 'imp');
                             if (!item.creator) item.creator = 'Unknown';
                             if (!item.year) item.year = 'N/A';
+                            if (!isSafeImageUrl(item.image)) item.image = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300';
                             validItems.push(item);
                         } else {
                             skipped++;
