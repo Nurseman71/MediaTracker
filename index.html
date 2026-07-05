@@ -4,6 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Media Vault</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0b0f19">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Media Vault">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <link rel="icon" href="icon-192.png">
     <!-- Tailwind CSS for Styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- HTML5 QR/Barcode Scanner Library -->
@@ -128,7 +136,7 @@
                     </select>
                     <input id="searchQuery" type="text" placeholder="Enter title or artist..." 
                            class="flex-grow bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-base text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    <button onclick="fetchSearchList()" class="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-base px-6 py-3 rounded-xl transition-all">
+                    <button onclick="fetchSearchList()" id="searchSubmitBtn" class="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold text-base px-6 py-3 rounded-xl transition-all">
                         Search
                     </button>
                 </div>
@@ -154,7 +162,7 @@
             </div>
             
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <input type="text" id="localSearch" oninput="renderCollection()" placeholder="🔍 Filter current vault..." class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                <input type="text" id="localSearch" oninput="handleLocalSearchInput()" placeholder="🔍 Filter current vault..." class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500">
                 <select id="sortConfig" onchange="renderCollection()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-slate-300 focus:outline-none cursor-pointer">
                     <option value="newest">Added: Newest First</option>
                     <option value="az">Title: A - Z</option>
@@ -390,6 +398,35 @@
             }
         }
 
+        // Generates a collision-resistant ID for manually-added items (crypto.randomUUID
+        // isn't available in every older browser context, so fall back to a
+        // timestamp+random string rather than relying on Date.now() alone).
+        function generateLocalId(prefix) {
+            if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+                return `${prefix}_${window.crypto.randomUUID()}`;
+            }
+            return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+        }
+
+        // Debounces the "filter current vault" input so typing doesn't trigger a
+        // full re-render + genre-dropdown rebuild on every single keystroke.
+        let localSearchDebounceTimer = null;
+        function handleLocalSearchInput() {
+            if (localSearchDebounceTimer) clearTimeout(localSearchDebounceTimer);
+            localSearchDebounceTimer = setTimeout(renderCollection, 200);
+        }
+
+        // Lets Escape close whichever modal is currently open (accessibility / UX nicety).
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            ['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal'].forEach(id => {
+                const modal = document.getElementById(id);
+                if (modal && !modal.classList.contains('hidden')) toggleModal(id, false);
+            });
+            const scanner = document.getElementById('barcodeScannerModal');
+            if (scanner && !scanner.classList.contains('hidden')) stopBarcodeScanner();
+        });
+
         function runDataMigrationChecks() {
             let changesMade = false;
             collection = collection.map(item => {
@@ -484,10 +521,13 @@
             const query = document.getElementById('searchQuery').value.trim();
             const omdbKey = document.getElementById('omdbKey').value.trim();
             const listContainer = document.getElementById('searchResultsList');
+            const submitBtn = document.getElementById('searchSubmitBtn');
 
             if (!query) return alert('Enter search term!');
             listContainer.innerHTML = '<p class="text-slate-400 text-xs text-center py-4">Searching online database...</p>';
             toggleModal('searchResultsModal', true);
+            submitBtn.disabled = true;
+            submitBtn.innerText = 'Searching...';
 
             try {
                 if (type === 'movie') {
@@ -536,6 +576,9 @@
                 document.getElementById('searchQuery').value = ''; 
             } catch (error) {
                 listContainer.innerHTML = `<p class="text-rose-400 text-sm text-center py-4 font-semibold">${escapeHtml(error.message)}</p>`;
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerText = 'Search';
             }
         }
 
@@ -549,7 +592,7 @@
                 temporaryPreviewItem = {
                     id: data.imdbID, type: 'movie', title: data.Title, creator: data.Director, year: data.Year,
                     image: data.Poster !== "N/A" ? data.Poster : 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300',
-                    meta: fullDetails, genres: data.Genre ? data.Genre.split(',').map(g => g.trim()).filter(g => g) : ['Movie'],
+                    meta: fullDetails, genres: data.Genre ? normalizeGenres(data.Genre.split(',')) : ['Movie'],
                     imdbRating: data.imdbRating !== "N/A" ? data.imdbRating : null, imdbID: data.imdbID, personalRating: 0, loanStatus: ''
                 };
                 showItemModal(temporaryPreviewItem, true);
@@ -595,15 +638,26 @@
             const imgInput = document.getElementById('manImage').value.trim();
 
             const newItem = {
-                id: 'man_' + Date.now().toString(), type: type, title: title,
+                id: generateLocalId('man'), type: type, title: title,
                 creator: document.getElementById('manCreator').value.trim() || 'Unknown',
                 year: document.getElementById('manYear').value.trim() || 'N/A',
                 image: imgInput ? imgInput : (type === 'movie' ? 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300' : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300'),
                 meta: document.getElementById('manDetails').value.trim() || 'Manual custom archive entry parameters.',
-                genres: genresStr ? genresStr.split(',').map(g => g.trim()).filter(g => g) : (type === 'movie' ? ['Movie'] : ['Music']),
+                genres: genresStr ? normalizeGenres(genresStr.split(',')) : (type === 'movie' ? ['Movie'] : ['Music']),
                 personalRating: 0, loanStatus: ''
             };
             collection.push(newItem); saveAndRender(); toggleModal('manualEntryModal', false);
+        }
+
+        // Dedupes genres case-insensitively (so "rock" and "Rock" don't become two
+        // separate filter entries) while keeping the first-seen casing.
+        function normalizeGenres(rawList) {
+            const seen = new Map();
+            rawList.map(g => g.trim()).filter(g => g).forEach(g => {
+                const key = g.toLowerCase();
+                if (!seen.has(key)) seen.set(key, g);
+            });
+            return Array.from(seen.values());
         }
 
         function approvePreviewItem() {
@@ -897,8 +951,31 @@
             shadowReader.onload = function(e) {
                 try {
                     const importedData = JSON.parse(e.target.result);
-                    if (Array.isArray(importedData)) { collection = importedData; runDataMigrationChecks(); saveAndRender(); alert("Imported!"); }
-                } catch (err) { alert("Import fail."); }
+                    if (!Array.isArray(importedData)) { alert("Import failed: file must contain a list of items."); return; }
+
+                    const validItems = [];
+                    let skipped = 0;
+                    importedData.forEach(item => {
+                        if (item && typeof item === 'object' && typeof item.title === 'string' && item.title.trim() &&
+                            (item.type === 'movie' || item.type === 'music')) {
+                            if (!item.id) item.id = generateLocalId(item.type === 'movie' ? 'imp' : 'imp');
+                            if (!item.creator) item.creator = 'Unknown';
+                            if (!item.year) item.year = 'N/A';
+                            validItems.push(item);
+                        } else {
+                            skipped++;
+                        }
+                    });
+
+                    if (validItems.length === 0) { alert("Import failed: no valid items found in that file."); return; }
+
+                    collection = validItems;
+                    runDataMigrationChecks();
+                    saveAndRender();
+                    alert(skipped > 0
+                        ? `Imported ${validItems.length} item(s). Skipped ${skipped} entry/entries that were missing required fields.`
+                        : `Imported ${validItems.length} item(s)!`);
+                } catch (err) { alert("Import failed: that file isn't valid JSON."); }
             };
             shadowReader.readAsText(file);
         }
@@ -1006,7 +1083,12 @@
 
             filtered.sort((a, b) => {
                 if (sortSelection === 'az') return a.title.localeCompare(b.title); if (sortSelection === 'za') return b.title.localeCompare(a.title);
-                if (sortSelection === 'year-desc') return parseInt(b.year) - parseInt(a.year); if (sortSelection === 'year-asc') return parseInt(a.year) - parseInt(b.year);
+                if (sortSelection === 'year-desc' || sortSelection === 'year-asc') {
+                    const yearA = parseInt(a.year, 10); const yearB = parseInt(b.year, 10);
+                    const safeA = Number.isNaN(yearA) ? -Infinity : yearA;
+                    const safeB = Number.isNaN(yearB) ? -Infinity : yearB;
+                    return sortSelection === 'year-desc' ? safeB - safeA : safeA - safeB;
+                }
                 return 0;
             });
             if (sortSelection === 'newest') filtered.reverse();
