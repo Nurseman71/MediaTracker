@@ -91,8 +91,14 @@
                 <button onclick="handleSyncButtonClick()" id="syncFolderBtn" class="hidden md:flex bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm px-4 py-2.5 rounded-xl shadow-md border border-emerald-500/20 transition-all items-center gap-1.5">
                     🔗 Link Sync Folder
                 </button>
+                <button onclick="openStatsModal()" class="flex-1 md:flex-none bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
+                    📊 Stats
+                </button>
                 <button onclick="exportToFile()" class="flex-1 md:flex-none bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
                     💾 Export Backup
+                </button>
+                <button onclick="exportToCsv()" class="flex-1 md:flex-none bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
+                    📄 CSV
                 </button>
                 <label class="flex-1 md:flex-none bg-slate-800 border border-slate-700 text-slate-300 text-sm px-4 py-2.5 rounded-xl cursor-pointer text-center backdrop-blur-md hover:bg-slate-700 transition-all flex items-center justify-center gap-1.5">
                     📂 Import
@@ -102,9 +108,9 @@
         </header>
 
         <!-- Stats Dashboard Grid -->
-        <section class="grid grid-cols-3 gap-3.5 mb-6">
+        <section class="grid grid-cols-2 sm:grid-cols-4 gap-3.5 mb-6">
             <div class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md">
-                <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Total</p>
+                <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Owned</p>
                 <p id="statTotal" class="text-2xl font-black text-slate-100">0</p>
             </div>
             <div class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md">
@@ -114,6 +120,10 @@
             <div class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md">
                 <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">CDs</p>
                 <p id="statMusic" class="text-2xl font-black text-sky-400">0</p>
+            </div>
+            <div class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md">
+                <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Wishlist</p>
+                <p id="statWishlist" class="text-2xl font-black text-amber-400">0</p>
             </div>
         </section>
 
@@ -170,11 +180,15 @@
 
         <!-- Vault Organization Tool Belt -->
         <div class="bg-slate-900/80 border border-slate-800 p-4 rounded-xl mb-6 flex flex-col gap-4 shadow-lg">
-            <div class="flex items-center justify-between gap-2">
+            <div class="flex flex-col sm:flex-row items-center justify-between gap-2">
                 <div class="flex gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800/60 w-full sm:w-auto">
                     <button onclick="filterMedia('all')" id="tab-all" class="flex-1 sm:flex-none text-xs font-bold px-4 py-2 rounded-md bg-indigo-600/20 text-indigo-300 transition-all">All</button>
                     <button onclick="filterMedia('movie')" id="tab-movie" class="flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-md text-slate-400 hover:text-slate-200 transition-all">Movies</button>
                     <button onclick="filterMedia('music')" id="tab-music" class="flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-md text-slate-400 hover:text-slate-200 transition-all">CDs</button>
+                </div>
+                <div class="flex gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800/60 w-full sm:w-auto">
+                    <button onclick="filterOwnership('vault')" id="tab-own-vault" class="flex-1 sm:flex-none text-xs font-bold px-4 py-2 rounded-md bg-indigo-600/20 text-indigo-300 transition-all">📦 Vault</button>
+                    <button onclick="filterOwnership('wishlist')" id="tab-own-wishlist" class="flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-md text-slate-400 hover:text-slate-200 transition-all">⭐ Wishlist</button>
                 </div>
             </div>
             
@@ -280,13 +294,48 @@
                                 View on IMDb ↗
                             </a>
                         </div>
-                        <div id="previewApprovalContainer" class="hidden flex gap-2">
-                            <button onclick="approvePreviewItem()" class="flex-grow bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-3 rounded-lg shadow transition-colors">
-                                ✅ Add to Vault
-                            </button>
-                            <button onclick="toggleModal('detailsModal', false)" class="bg-slate-700 text-slate-300 font-semibold text-xs py-2 px-3 rounded-lg">
-                                Cancel
-                            </button>
+                        <div id="ownedItemControls" class="hidden flex flex-col gap-2.5">
+                            <div class="flex gap-2">
+                                <select id="modalFormatSelect" onchange="updateItemFormatCondition()" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200">
+                                    <option value="">Format...</option>
+                                    <option value="DVD">DVD</option>
+                                    <option value="Blu-ray">Blu-ray</option>
+                                    <option value="4K UHD">4K UHD</option>
+                                    <option value="CD">CD</option>
+                                    <option value="Vinyl">Vinyl</option>
+                                    <option value="Cassette">Cassette</option>
+                                    <option value="Digital">Digital</option>
+                                </select>
+                                <select id="modalConditionSelect" onchange="updateItemFormatCondition()" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200">
+                                    <option value="">Condition...</option>
+                                    <option value="Mint">Mint</option>
+                                    <option value="Good">Good</option>
+                                    <option value="Fair">Fair</option>
+                                    <option value="Poor">Poor</option>
+                                </select>
+                            </div>
+                            <div class="flex gap-2">
+                                <button onclick="openLoanModal()" id="loanStatusBtn" class="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold text-xs py-2 rounded-lg transition-colors">
+                                    📦 Manage Loan
+                                </button>
+                                <button onclick="toggleWishlistStatus()" id="wishlistToggleBtn" class="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold text-xs py-2 rounded-lg transition-colors">
+                                    ⭐ Add to Wishlist
+                                </button>
+                            </div>
+                        </div>
+                        <div id="previewApprovalContainer" class="hidden flex flex-col gap-2">
+                            <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                                <input type="checkbox" id="previewWishlistCheck" class="w-3.5 h-3.5 accent-indigo-500">
+                                Add to Wishlist instead (don't own it yet)
+                            </label>
+                            <div class="flex gap-2">
+                                <button onclick="approvePreviewItem()" class="flex-grow bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-3 rounded-lg shadow transition-colors">
+                                    ✅ Add Item
+                                </button>
+                                <button onclick="toggleModal('detailsModal', false)" class="bg-slate-700 text-slate-300 font-semibold text-xs py-2 px-3 rounded-lg">
+                                    Cancel
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -312,11 +361,72 @@
                     </div>
                     <textarea id="manDetails" rows="2" placeholder="Description / Tracklist" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-base text-white"></textarea>
                     <input type="text" id="manImage" placeholder="Poster Image URL (Optional)" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-base text-white">
+                    <div class="flex gap-2">
+                        <select id="manFormat" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white w-1/2">
+                            <option value="">Format (optional)</option>
+                            <option value="DVD">DVD</option>
+                            <option value="Blu-ray">Blu-ray</option>
+                            <option value="4K UHD">4K UHD</option>
+                            <option value="CD">CD</option>
+                            <option value="Vinyl">Vinyl</option>
+                            <option value="Cassette">Cassette</option>
+                            <option value="Digital">Digital</option>
+                        </select>
+                        <select id="manCondition" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white w-1/2">
+                            <option value="">Condition (optional)</option>
+                            <option value="Mint">Mint</option>
+                            <option value="Good">Good</option>
+                            <option value="Fair">Fair</option>
+                            <option value="Poor">Poor</option>
+                        </select>
+                    </div>
+                    <label class="flex items-center gap-2 text-sm text-slate-300 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 cursor-pointer">
+                        <input type="checkbox" id="manWishlist" class="w-4 h-4 accent-indigo-500">
+                        Add to Wishlist (don't own it yet)
+                    </label>
                 </div>
                 <div class="flex gap-2 mt-4">
                     <button onclick="saveManualEntry()" class="flex-grow bg-indigo-600 text-white font-bold text-xs py-2 rounded-lg">Add to Collection</button>
                     <button onclick="toggleModal('manualEntryModal', false)" class="bg-slate-800 text-slate-300 font-semibold text-xs py-2 px-4 rounded-lg">Cancel</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 4: Loan Details -->
+    <div id="loanModal" class="fixed inset-0 bg-slate-950/80 hidden z-50 flex items-center justify-center p-4 backdrop-blur-md" onclick="closeModal(event)">
+        <div class="bg-slate-900 border border-slate-700/60 rounded-2xl max-w-sm w-full shadow-2xl relative" onclick="event.stopPropagation()">
+            <div class="p-5">
+                <h3 class="text-base font-black text-indigo-400 mb-3 border-b border-slate-800 pb-1.5">Loan Details</h3>
+                <div class="flex flex-col gap-3">
+                    <input type="text" id="loanBorrower" placeholder="Lent to (leave blank if not lent out)" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-base text-white">
+                    <div class="flex gap-2">
+                        <div class="w-1/2">
+                            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date Lent</label>
+                            <input type="date" id="loanLentDate" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-sm text-white">
+                        </div>
+                        <div class="w-1/2">
+                            <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Due Back</label>
+                            <input type="date" id="loanDueDate" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-2 text-sm text-white">
+                        </div>
+                    </div>
+                </div>
+                <div class="flex gap-2 mt-4">
+                    <button onclick="saveLoanDetails()" class="flex-grow bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 rounded-lg">Save</button>
+                    <button onclick="clearLoanDetails()" class="bg-slate-800 text-rose-400 font-semibold text-xs py-2 px-4 rounded-lg border border-slate-700">Clear</button>
+                    <button onclick="toggleModal('loanModal', false)" class="bg-slate-800 text-slate-300 font-semibold text-xs py-2 px-4 rounded-lg">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 5: Collection Stats -->
+    <div id="statsModal" class="fixed inset-0 bg-slate-950/80 hidden z-50 flex items-center justify-center p-4 backdrop-blur-md" onclick="closeModal(event)">
+        <div class="bg-slate-900 border border-slate-700/60 rounded-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto shadow-2xl relative" onclick="event.stopPropagation()">
+            <button onclick="toggleModal('statsModal', false)" aria-label="Close stats" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg font-bold bg-slate-800 w-8 h-8 rounded-full flex items-center justify-center border border-slate-700">&times;</button>
+            <div class="p-5">
+                <h3 class="text-base font-black text-white mb-4">Collection Stats</h3>
+                <div id="statsContent" class="flex flex-col gap-5"></div>
             </div>
         </div>
     </div>
@@ -503,7 +613,7 @@
         // Lets Escape close whichever modal is currently open (accessibility / UX nicety).
         document.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
-            ['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal'].forEach(id => {
+            ['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal', 'loanModal', 'statsModal'].forEach(id => {
                 const modal = document.getElementById(id);
                 if (modal && !modal.classList.contains('hidden')) toggleModal(id, false);
             });
@@ -524,7 +634,17 @@
                     if (item.genres.length === 0) item.genres = item.type === 'movie' ? ['Movie'] : ['Music'];
                 }
                 if (item.personalRating === undefined) { item.personalRating = 0; changesMade = true; }
-                if (item.loanStatus === undefined) { item.loanStatus = ''; changesMade = true; }
+                // Migrate the old plain-string loanStatus into a structured loan object
+                // (borrower + dates) while keeping loanStatus around for anything that
+                // still reads it directly.
+                if (!item.loan || typeof item.loan !== 'object') {
+                    item.loan = { borrower: item.loanStatus || '', lentDate: '', dueDate: '' };
+                    changesMade = true;
+                }
+                if (item.loanStatus === undefined) { item.loanStatus = item.loan.borrower || ''; changesMade = true; }
+                if (item.wishlist === undefined) { item.wishlist = false; changesMade = true; }
+                if (item.format === undefined) { item.format = ''; changesMade = true; }
+                if (item.condition === undefined) { item.condition = ''; changesMade = true; }
                 return item;
             });
             if (changesMade) safeSetLocalStorage('myMediaCollection', JSON.stringify(collection));
@@ -677,7 +797,8 @@
                     id: data.imdbID, type: 'movie', title: data.Title, creator: data.Director, year: data.Year,
                     image: data.Poster !== "N/A" ? data.Poster : 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300',
                     meta: fullDetails, genres: data.Genre ? normalizeGenres(data.Genre.split(',')) : ['Movie'],
-                    imdbRating: data.imdbRating !== "N/A" ? data.imdbRating : null, imdbID: data.imdbID, personalRating: 0, loanStatus: ''
+                    imdbRating: data.imdbRating !== "N/A" ? data.imdbRating : null, imdbID: data.imdbID, personalRating: 0,
+                    loanStatus: '', loan: { borrower: '', lentDate: '', dueDate: '' }, wishlist: false, format: '', condition: ''
                 };
                 showItemModal(temporaryPreviewItem, true);
             } catch(e) { alert("Error loading details."); }
@@ -700,7 +821,7 @@
                 temporaryPreviewItem = {
                     id: album.collectionId.toString(), type: 'music', title: album.collectionName, creator: album.artistName, year: new Date(album.releaseDate).getFullYear(),
                     image: album.artworkUrl100.replace('100x100bb', '400x400bb'), meta: tracklistDetails, genres: album.primaryGenreName ? [album.primaryGenreName.trim()] : ['Music'],
-                    personalRating: 0, loanStatus: ''
+                    personalRating: 0, loanStatus: '', loan: { borrower: '', lentDate: '', dueDate: '' }, wishlist: false, format: '', condition: ''
                 };
                 showItemModal(temporaryPreviewItem, true);
             } catch(e) { alert("Error parsing music."); }
@@ -711,6 +832,8 @@
             document.getElementById('manTitle').value = ''; document.getElementById('manCreator').value = '';
             document.getElementById('manYear').value = ''; document.getElementById('manGenre').value = '';
             document.getElementById('manDetails').value = ''; document.getElementById('manImage').value = '';
+            document.getElementById('manFormat').value = ''; document.getElementById('manCondition').value = '';
+            document.getElementById('manWishlist').checked = false;
             toggleModal('manualEntryModal', true);
         }
 
@@ -739,7 +862,9 @@
                 image: imgInput ? imgInput : (type === 'movie' ? 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300' : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300'),
                 meta: document.getElementById('manDetails').value.trim() || 'Manual custom archive entry parameters.',
                 genres: genresStr ? normalizeGenres(genresStr.split(',')) : (type === 'movie' ? ['Movie'] : ['Music']),
-                personalRating: 0, loanStatus: ''
+                personalRating: 0, loanStatus: '', loan: { borrower: '', lentDate: '', dueDate: '' },
+                format: document.getElementById('manFormat').value, condition: document.getElementById('manCondition').value,
+                wishlist: document.getElementById('manWishlist').checked
             };
             collection.push(newItem); saveAndRender(); toggleModal('manualEntryModal', false);
         }
@@ -760,6 +885,7 @@
             if (collection.some(existing => existing.id === temporaryPreviewItem.id)) {
                 alert('Item already in vault!'); toggleModal('detailsModal', false); return;
             }
+            temporaryPreviewItem.wishlist = document.getElementById('previewWishlistCheck').checked;
             collection.push(temporaryPreviewItem); temporaryPreviewItem = null; saveAndRender(); toggleModal('detailsModal', false);
         }
 
@@ -960,9 +1086,84 @@
             if(item) { item.personalRating = (item.personalRating === stars) ? 0 : stars; saveAndRender(); }
         }
 
-        function updateLoan(id, text, event) {
+        // --- LOAN TRACKING ---
+        function isLoanOverdue(item) {
+            if (!item.loan || !item.loan.borrower || !item.loan.dueDate) return false;
+            const due = new Date(item.loan.dueDate + 'T23:59:59');
+            return due.getTime() < Date.now();
+        }
+
+        let currentDetailItemId = null;
+
+        function openLoanModalForItem(id, event) {
+            if (event) event.stopPropagation();
+            currentDetailItemId = id;
+            openLoanModal();
+        }
+
+        function openLoanModal() {
+            const item = collection.find(i => i.id === currentDetailItemId);
+            if (!item) return;
+            document.getElementById('loanBorrower').value = (item.loan && item.loan.borrower) || '';
+            document.getElementById('loanLentDate').value = (item.loan && item.loan.lentDate) || '';
+            document.getElementById('loanDueDate').value = (item.loan && item.loan.dueDate) || '';
+            toggleModal('loanModal', true);
+        }
+
+        function saveLoanDetails() {
+            const item = collection.find(i => i.id === currentDetailItemId);
+            if (!item) return;
+            const borrower = document.getElementById('loanBorrower').value.trim();
+            const lentDate = document.getElementById('loanLentDate').value;
+            const dueDate = document.getElementById('loanDueDate').value;
+            item.loan = { borrower, lentDate, dueDate };
+            item.loanStatus = borrower; // keep legacy field in sync for anything still reading it
+            saveAndRender();
+            populateOwnedItemControls(item);
+            toggleModal('loanModal', false);
+        }
+
+        function clearLoanDetails() {
+            document.getElementById('loanBorrower').value = '';
+            document.getElementById('loanLentDate').value = '';
+            document.getElementById('loanDueDate').value = '';
+            saveLoanDetails();
+        }
+
+        // --- WISHLIST + FORMAT/CONDITION (details modal, owned items) ---
+        function populateOwnedItemControls(item) {
+            const controls = document.getElementById('ownedItemControls');
+            controls.classList.remove('hidden');
+            document.getElementById('modalFormatSelect').value = item.format || '';
+            document.getElementById('modalConditionSelect').value = item.condition || '';
+            const loanBtn = document.getElementById('loanStatusBtn');
+            loanBtn.innerText = (item.loan && item.loan.borrower) ? `📦 Lent to ${item.loan.borrower}` : '📦 Manage Loan';
+            const wishlistBtn = document.getElementById('wishlistToggleBtn');
+            wishlistBtn.innerText = item.wishlist ? '📦 Move to Vault' : '⭐ Add to Wishlist';
+        }
+
+        function updateItemFormatCondition() {
+            const item = collection.find(i => i.id === currentDetailItemId);
+            if (!item) return;
+            item.format = document.getElementById('modalFormatSelect').value;
+            item.condition = document.getElementById('modalConditionSelect').value;
+            saveAndRender();
+        }
+
+        function toggleWishlistStatus() {
+            const item = collection.find(i => i.id === currentDetailItemId);
+            if (!item) return;
+            item.wishlist = !item.wishlist;
+            saveAndRender();
+            populateOwnedItemControls(item);
+        }
+
+        function markItemAsOwned(id, event) {
+            if (event) event.stopPropagation();
             const item = collection.find(i => i.id === id);
-            if(item) { item.loanStatus = text.trim(); safeSetLocalStorage('myMediaCollection', JSON.stringify(collection)); }
+            if (!item) return;
+            item.wishlist = false;
+            saveAndRender();
         }
 
         // --- SAVE AND PORT DATA PIPELINES ---
@@ -974,9 +1175,11 @@
 
         // --- GRAPHICS AND RENDER CORNERSTONES ---
         function updateStatsDashboard() {
-            document.getElementById('statTotal').innerText = collection.length;
-            document.getElementById('statMovies').innerText = collection.filter(item => item.type === 'movie').length;
-            document.getElementById('statMusic').innerText = collection.filter(item => item.type === 'music').length;
+            const owned = collection.filter(item => !item.wishlist);
+            document.getElementById('statTotal').innerText = owned.length;
+            document.getElementById('statMovies').innerText = owned.filter(item => item.type === 'movie').length;
+            document.getElementById('statMusic').innerText = owned.filter(item => item.type === 'music').length;
+            document.getElementById('statWishlist').innerText = collection.filter(item => item.wishlist).length;
         }
 
         function populateGenreFilterOptions() {
@@ -992,6 +1195,73 @@
             });
         }
 
+        // Renders a simple horizontal bar list (label, count, proportional width bar)
+        // without pulling in a charting library — kept intentionally lightweight.
+        function renderStatBars(entries, barColorClass) {
+            const maxCount = Math.max(...entries.map(([, count]) => count), 1);
+            return entries.map(([label, count]) => `
+                <div class="flex items-center gap-2 text-xs">
+                    <span class="w-24 flex-shrink-0 truncate text-slate-300">${escapeHtml(label)}</span>
+                    <div class="flex-grow bg-slate-950 rounded-full h-3 overflow-hidden">
+                        <div class="${barColorClass} h-full rounded-full" style="width: ${Math.max(6, (count / maxCount) * 100)}%"></div>
+                    </div>
+                    <span class="w-6 flex-shrink-0 text-right text-slate-400 font-semibold">${count}</span>
+                </div>
+            `).join('');
+        }
+
+        function openStatsModal() {
+            const owned = collection.filter(item => !item.wishlist);
+            const content = document.getElementById('statsContent');
+
+            if (owned.length === 0) {
+                content.innerHTML = '<p class="text-slate-500 text-sm text-center py-6">Add some items to your vault to see stats here.</p>';
+                toggleModal('statsModal', true);
+                return;
+            }
+
+            // By decade
+            const decadeCounts = {};
+            owned.forEach(item => {
+                const year = parseInt(item.year, 10);
+                const decade = Number.isNaN(year) ? 'Unknown' : `${Math.floor(year / 10) * 10}s`;
+                decadeCounts[decade] = (decadeCounts[decade] || 0) + 1;
+            });
+            const decadeEntries = Object.entries(decadeCounts).sort((a, b) => {
+                if (a[0] === 'Unknown') return 1; if (b[0] === 'Unknown') return -1;
+                return parseInt(a[0]) - parseInt(b[0]);
+            });
+
+            // By genre (top 8)
+            const genreCounts = {};
+            owned.forEach(item => (item.genres || []).forEach(g => { genreCounts[g] = (genreCounts[g] || 0) + 1; }));
+            const genreEntries = Object.entries(genreCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+
+            // By personal rating
+            const ratingCounts = { '★★★★★': 0, '★★★★': 0, '★★★': 0, '★★': 0, '★': 0, 'Unrated': 0 };
+            owned.forEach(item => {
+                const r = item.personalRating || 0;
+                if (r === 0) ratingCounts['Unrated']++; else ratingCounts['★'.repeat(r)]++;
+            });
+            const ratingEntries = Object.entries(ratingCounts).filter(([, count]) => count > 0);
+
+            content.innerHTML = `
+                <div>
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">By Decade</h4>
+                    <div class="flex flex-col gap-1.5">${renderStatBars(decadeEntries, 'bg-indigo-500')}</div>
+                </div>
+                <div>
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Top Genres</h4>
+                    <div class="flex flex-col gap-1.5">${renderStatBars(genreEntries, 'bg-sky-500')}</div>
+                </div>
+                <div>
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Your Ratings</h4>
+                    <div class="flex flex-col gap-1.5">${renderStatBars(ratingEntries, 'bg-amber-500')}</div>
+                </div>
+            `;
+            toggleModal('statsModal', true);
+        }
+
         function selectGenre(genre) { selectedGenre = genre; renderCollection(); }
         
         function filterMedia(type) {
@@ -1001,6 +1271,18 @@
                     ? "flex-1 sm:flex-none text-xs font-bold px-4 py-2 rounded-md bg-indigo-600/20 text-indigo-300 transition-all" 
                     : "flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-md text-slate-400 hover:text-slate-200 transition-all";
             });
+            renderCollection();
+        }
+
+        let currentOwnershipFilter = 'vault';
+        function filterOwnership(mode) {
+            currentOwnershipFilter = mode;
+            document.getElementById('tab-own-vault').className = (mode === 'vault')
+                ? "flex-1 sm:flex-none text-xs font-bold px-4 py-2 rounded-md bg-indigo-600/20 text-indigo-300 transition-all"
+                : "flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-md text-slate-400 hover:text-slate-200 transition-all";
+            document.getElementById('tab-own-wishlist').className = (mode === 'wishlist')
+                ? "flex-1 sm:flex-none text-xs font-bold px-4 py-2 rounded-md bg-indigo-600/20 text-indigo-300 transition-all"
+                : "flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-md text-slate-400 hover:text-slate-200 transition-all";
             renderCollection();
         }
 
@@ -1023,6 +1305,45 @@
                     URL.revokeObjectURL(downloadAnchor.href);
                 } catch(e) {
                     alert("Export file generation failed on this browser container.");
+                }
+            }
+        }
+
+        // Escapes a single CSV field per RFC 4180: wrap in quotes and double up any
+        // internal quotes if the value contains a comma, quote, or newline.
+        function csvField(value) {
+            const str = String(value ?? '');
+            if (/[",\n]/.test(str)) return '"' + str.replace(/"/g, '""') + '"';
+            return str;
+        }
+
+        function exportToCsv() {
+            if (collection.length === 0) return alert("Collection empty!");
+            const headers = ['Title', 'Creator', 'Year', 'Type', 'Genres', 'Format', 'Condition', 'Rating', 'Wishlist', 'Lent To', 'Date Lent', 'Due Back'];
+            const rows = collection.map(item => [
+                item.title, item.creator, item.year, item.type,
+                (item.genres || []).join('; '), item.format || '', item.condition || '',
+                item.personalRating || 0, item.wishlist ? 'Yes' : 'No',
+                (item.loan && item.loan.borrower) || '', (item.loan && item.loan.lentDate) || '', (item.loan && item.loan.dueDate) || ''
+            ]);
+            const csvContent = [headers, ...rows].map(row => row.map(csvField).join(',')).join('\r\n');
+
+            if (navigator.share && /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+                navigator.share({ title: 'Media Vault CSV', text: csvContent })
+                .then(() => console.log('Successful share'))
+                .catch((error) => console.log('Error sharing', error));
+            } else {
+                try {
+                    const blob = new Blob([csvContent], { type: 'text/csv' });
+                    const downloadAnchor = document.createElement('a');
+                    downloadAnchor.href = URL.createObjectURL(blob);
+                    downloadAnchor.setAttribute("download", "media_collection.csv");
+                    document.body.appendChild(downloadAnchor);
+                    downloadAnchor.click();
+                    downloadAnchor.remove();
+                    URL.revokeObjectURL(downloadAnchor.href);
+                } catch(e) {
+                    alert("CSV export failed on this browser container.");
                 }
             }
         }
@@ -1087,9 +1408,11 @@
             const previewBadge = document.getElementById('modalPreviewBadge');
             const imdbLinkContainer = document.getElementById('imdbLinkContainer');
             const previewApprovalContainer = document.getElementById('previewApprovalContainer');
+            const ownedItemControls = document.getElementById('ownedItemControls');
 
             ratingBadge.classList.add('hidden'); imdbLinkContainer.classList.add('hidden');
             previewBadge.classList.add('hidden'); previewApprovalContainer.classList.add('hidden');
+            ownedItemControls.classList.add('hidden');
 
             if (item.type === 'movie') {
                 badge.innerText = '🎬 Movie'; badge.className = 'text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 inline-block';
@@ -1099,8 +1422,15 @@
                 badge.innerText = '🎵 Music'; badge.className = 'text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded bg-sky-500/10 border border-sky-500/20 text-sky-400 inline-block';
             }
 
-            if (isPreviewMode) { previewBadge.classList.remove('hidden'); previewApprovalContainer.classList.remove('hidden'); }
-            else { if (item.type === 'movie' && item.imdbID) imdbLinkContainer.classList.remove('hidden'); }
+            if (isPreviewMode) {
+                currentDetailItemId = null;
+                document.getElementById('previewWishlistCheck').checked = false;
+                previewBadge.classList.remove('hidden'); previewApprovalContainer.classList.remove('hidden');
+            } else {
+                if (item.type === 'movie' && item.imdbID) imdbLinkContainer.classList.remove('hidden');
+                currentDetailItemId = item.id;
+                populateOwnedItemControls(item);
+            }
             toggleModal('detailsModal', true);
         }
 
@@ -1122,6 +1452,8 @@
                 document.getElementById('modalRatingBadge').classList.add('hidden');
                 document.getElementById('imdbLinkContainer').classList.add('hidden');
                 document.getElementById('previewApprovalContainer').classList.add('hidden');
+                currentDetailItemId = item.id;
+                populateOwnedItemControls(item);
                 toggleModal('detailsModal', true);
 
                 try {
@@ -1162,7 +1494,7 @@
             else { modal.classList.add('hidden'); document.body.style.overflow = ''; }
         }
 
-        function closeModal(event) { if (['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal'].includes(event.target.id)) toggleModal(event.target.id, false); }
+        function closeModal(event) { if (['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal', 'loanModal', 'statsModal'].includes(event.target.id)) toggleModal(event.target.id, false); }
 
         function renderCollection() {
             updateStatsDashboard(); populateGenreFilterOptions();
@@ -1174,7 +1506,8 @@
                 const matchesType = (currentFilter === 'all' || item.type === currentFilter);
                 const matchesGenre = (selectedGenre === 'all' || (item.genres && item.genres.includes(selectedGenre)));
                 const matchesText = !localSearchTerm || item.title.toLowerCase().includes(localSearchTerm) || item.creator.toLowerCase().includes(localSearchTerm);
-                return matchesType && matchesGenre && matchesText;
+                const matchesOwnership = currentOwnershipFilter === 'wishlist' ? !!item.wishlist : !item.wishlist;
+                return matchesType && matchesGenre && matchesText && matchesOwnership;
             });
 
             filtered.sort((a, b) => {
@@ -1202,6 +1535,12 @@
                 let starsHTML = '';
                 for(let i=1; i<=5; i++) { starsHTML += `<span onclick="updateRating('${item.id}', ${i}, event)" class="text-sm transition-colors ${rating >= i ? 'text-amber-400' : 'text-slate-600'}">★</span>`; }
 
+                const overdue = isLoanOverdue(item);
+                const loanLabel = (item.loan && item.loan.borrower) ? item.loan.borrower : 'Lend';
+                const loanBtnClass = overdue
+                    ? "bg-rose-950/60 border-rose-700/60 text-rose-300"
+                    : (item.loan && item.loan.borrower ? "bg-indigo-950/60 border-indigo-700/60 text-indigo-300" : "bg-slate-950 border-slate-700/60 text-slate-400");
+
                 card.innerHTML = `
                     <div class="flex flex-col h-[245px]">
                         <div class="relative h-36 w-full bg-slate-950 flex items-center justify-center overflow-hidden border-b border-slate-900/60">
@@ -1209,20 +1548,23 @@
                             <span class="absolute top-2 right-2 text-[9px] font-black tracking-wider uppercase px-2 py-0.5 rounded backdrop-blur-md bg-slate-900/60 text-slate-300">
                                 ${item.type === 'movie' ? '🎬' : '🎵'}
                             </span>
+                            ${item.wishlist ? `<span class="absolute top-2 left-2 text-[9px] font-black tracking-wider uppercase px-2 py-0.5 rounded backdrop-blur-md bg-amber-500/80 text-slate-950">⭐ Wishlist</span>` : ''}
                         </div>
                         <div class="p-3 flex-grow flex flex-col justify-between">
                             <div class="leading-tight">
                                 <h3 class="font-bold text-sm text-slate-100 line-clamp-1" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</h3>
                                 <p class="text-xs text-slate-400 truncate mt-0.5">${escapeHtml(item.creator)} <span class="text-slate-500 text-[10px]">(${escapeHtml(item.year)})</span></p>
+                                ${(item.format || item.condition) ? `<p class="text-[10px] text-slate-500 truncate mt-0.5">${escapeHtml([item.format, item.condition].filter(Boolean).join(' · '))}</p>` : ''}
                             </div>
                             <div class="flex items-center justify-between mt-2.5" onclick="event.stopPropagation()">
                                 <div class="flex gap-0.5 text-slate-600 star-group" role="group" aria-label="Personal rating">${starsHTML}</div>
-                                <input type="text" value="${escapeHtml(item.loanStatus || '')}" onchange="updateLoan('${item.id}', this.value, event)" placeholder="Lent to..." aria-label="Lent to" class="w-20 bg-slate-950 border border-slate-700/60 rounded px-1.5 py-0.5 text-xs text-slate-300 focus:outline-none">
+                                ${item.wishlist ? '' : `<button onclick="openLoanModalForItem('${item.id}', event)" aria-label="Manage loan for ${escapeHtml(item.title)}" class="border rounded px-1.5 py-0.5 text-[10px] font-semibold max-w-[84px] truncate ${loanBtnClass}">📦 ${escapeHtml(loanLabel)}${overdue ? ' ⚠️' : ''}</button>`}
                             </div>
                         </div>
                     </div>
-                    <div class="px-3 pb-3">
-                        <button onclick="deleteItem('${item.id}', event)" aria-label="Remove ${escapeHtml(item.title)} from vault" class="w-full bg-slate-900/40 border border-slate-800 text-slate-400 hover:text-rose-400 font-bold text-[10px] uppercase tracking-wider py-1.5 rounded-lg transition-all">
+                    <div class="px-3 pb-3 flex gap-1.5">
+                        ${item.wishlist ? `<button onclick="markItemAsOwned('${item.id}', event)" aria-label="Mark ${escapeHtml(item.title)} as owned" class="flex-1 bg-emerald-950/60 border border-emerald-700/60 text-emerald-300 hover:text-emerald-200 font-bold text-[10px] uppercase tracking-wider py-1.5 rounded-lg transition-all">✅ Own It</button>` : ''}
+                        <button onclick="deleteItem('${item.id}', event)" aria-label="Remove ${escapeHtml(item.title)} from vault" class="flex-1 bg-slate-900/40 border border-slate-800 text-slate-400 hover:text-rose-400 font-bold text-[10px] uppercase tracking-wider py-1.5 rounded-lg transition-all">
                             Remove
                         </button>
                     </div>
