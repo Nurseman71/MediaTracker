@@ -94,6 +94,9 @@
                 <button onclick="openStatsModal()" class="flex-1 md:flex-none bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
                     📊 Stats
                 </button>
+                <button onclick="openDuplicatesModal()" class="flex-1 md:flex-none bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
+                    🔍 Duplicates
+                </button>
                 <button onclick="exportToFile()" class="flex-1 md:flex-none bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
                     💾 Export Backup
                 </button>
@@ -197,7 +200,7 @@
             </div>
             
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <input type="text" id="localSearch" oninput="handleLocalSearchInput()" placeholder="🔍 Filter current vault..." class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                <input type="text" id="localSearch" oninput="handleLocalSearchInput()" placeholder="🔍 Filter current vault (title, creator, plot)..." class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500">
                 <select id="sortConfig" onchange="renderCollection()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-slate-300 focus:outline-none cursor-pointer">
                     <option value="newest">Added: Newest First</option>
                     <option value="az">Title: A - Z</option>
@@ -207,6 +210,19 @@
                 </select>
                 <select id="genreFilter" onchange="selectGenre(this.value)" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-slate-300 focus:outline-none cursor-pointer">
                     <option value="all">All Genres</option>
+                </select>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <select id="loanFilter" onchange="selectLoanFilter(this.value)" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-slate-300 focus:outline-none cursor-pointer">
+                    <option value="all">Any Loan Status</option>
+                    <option value="lent">📦 Currently Lent Out</option>
+                    <option value="overdue">⚠️ Overdue</option>
+                </select>
+                <select id="formatFilter" onchange="selectFormatFilter(this.value)" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-slate-300 focus:outline-none cursor-pointer">
+                    <option value="all">All Formats</option>
+                </select>
+                <select id="conditionFilter" onchange="selectConditionFilter(this.value)" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-slate-300 focus:outline-none cursor-pointer">
+                    <option value="all">All Conditions</option>
                 </select>
             </div>
         </div>
@@ -438,6 +454,18 @@
         </div>
     </div>
 
+    <!-- MODAL 6: Duplicate Detection -->
+    <div id="duplicatesModal" class="fixed inset-0 bg-slate-950/80 hidden z-50 flex items-center justify-center p-4 backdrop-blur-md" onclick="closeModal(event)">
+        <div class="bg-slate-900 border border-slate-700/60 rounded-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto shadow-2xl relative" onclick="event.stopPropagation()">
+            <button onclick="toggleModal('duplicatesModal', false)" aria-label="Close duplicates" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg font-bold bg-slate-800 w-8 h-8 rounded-full flex items-center justify-center border border-slate-700">&times;</button>
+            <div class="p-5">
+                <h3 class="text-base font-black text-white mb-1">Possible Duplicates</h3>
+                <p class="text-xs text-slate-400 mb-4">Items matched by the same title, creator, and type.</p>
+                <div id="duplicatesContent" class="flex flex-col gap-3"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- UNDO NOTIFICATION TOAST BAR -->
     <div id="undoToast" class="fixed bottom-4 left-4 right-4 bg-slate-900/95 border border-slate-700/60 shadow-2xl rounded-xl p-3 flex items-center justify-between z-50 transition-all duration-300 translate-y-24 opacity-0 pointer-events-none max-w-sm mx-auto backdrop-blur-md">
         <div class="flex items-center gap-2 text-xs text-slate-200">
@@ -571,6 +599,9 @@
         let collection = JSON.parse(localStorage.getItem('myMediaCollection')) || [];
         let currentFilter = 'all';
         let selectedGenre = 'all';
+        let selectedLoanFilter = 'all'; // 'all' | 'lent' | 'overdue'
+        let selectedFormat = 'all';
+        let selectedCondition = 'all';
         let temporaryPreviewItem = null;
         let barcodeScannerInstance = null;
         let itemCacheForUndo = null;
@@ -620,7 +651,7 @@
         // Lets Escape close whichever modal is currently open (accessibility / UX nicety).
         document.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
-            ['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal', 'loanModal', 'statsModal'].forEach(id => {
+            ['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal', 'loanModal', 'statsModal', 'duplicatesModal'].forEach(id => {
                 const modal = document.getElementById(id);
                 if (modal && !modal.classList.contains('hidden')) toggleModal(id, false);
             });
@@ -1241,6 +1272,34 @@
             });
         }
 
+        // Shared helper for the Format/Condition dropdowns: pulls distinct non-empty
+        // values currently present in the collection and rebuilds the <select>.
+        function populateFieldFilterOptions(dropdownId, fieldName, currentValue, defaultLabel) {
+            const dropdown = document.getElementById(dropdownId);
+            const values = new Set();
+            collection.forEach(item => { if (item[fieldName]) values.add(item[fieldName]); });
+            const sortedValues = Array.from(values).sort();
+            if (currentValue !== 'all' && !values.has(currentValue)) currentValue = 'all';
+            dropdown.innerHTML = `<option value="all">${defaultLabel}</option>`;
+            sortedValues.forEach(val => {
+                const option = document.createElement('option'); option.value = val; option.innerText = val;
+                if (val === currentValue) option.selected = true; dropdown.appendChild(option);
+            });
+            return currentValue;
+        }
+
+        function populateFormatFilterOptions() {
+            selectedFormat = populateFieldFilterOptions('formatFilter', 'format', selectedFormat, 'All Formats');
+        }
+
+        function populateConditionFilterOptions() {
+            selectedCondition = populateFieldFilterOptions('conditionFilter', 'condition', selectedCondition, 'All Conditions');
+        }
+
+        function selectFormatFilter(value) { selectedFormat = value; renderCollection(); }
+        function selectConditionFilter(value) { selectedCondition = value; renderCollection(); }
+        function selectLoanFilter(value) { selectedLoanFilter = value; renderCollection(); }
+
         // Renders a simple horizontal bar list (label, count, proportional width bar)
         // without pulling in a charting library — kept intentionally lightweight.
         function renderStatBars(entries, barColorClass) {
@@ -1306,6 +1365,56 @@
                 </div>
             `;
             toggleModal('statsModal', true);
+        }
+
+        // --- DUPLICATE DETECTION ---
+        function findDuplicateGroups() {
+            const groups = {};
+            collection.forEach(item => {
+                const key = `${(item.title || '').trim().toLowerCase()}|${(item.creator || '').trim().toLowerCase()}|${item.type}`;
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(item);
+            });
+            return Object.values(groups).filter(group => group.length > 1);
+        }
+
+        function openDuplicatesModal() {
+            renderDuplicatesContent();
+            toggleModal('duplicatesModal', true);
+        }
+
+        function renderDuplicatesContent() {
+            const groups = findDuplicateGroups();
+            const content = document.getElementById('duplicatesContent');
+
+            if (groups.length === 0) {
+                content.innerHTML = '<p class="text-slate-500 text-sm text-center py-6">No duplicates found — your vault looks clean!</p>';
+                return;
+            }
+
+            content.innerHTML = groups.map(group => `
+                <div class="bg-slate-950 border border-slate-800 rounded-xl p-3">
+                    <p class="text-xs font-bold text-slate-300 mb-2">${escapeHtml(group[0].title)} <span class="text-slate-500 font-normal">— ${escapeHtml(group[0].creator)}</span></p>
+                    <div class="flex flex-col gap-1.5">
+                        ${group.map(item => `
+                            <div class="flex items-center justify-between gap-2 bg-slate-900 rounded-lg px-2.5 py-1.5">
+                                <span class="text-[11px] text-slate-400 truncate">${escapeHtml(item.year)} ${item.format ? '· ' + escapeHtml(item.format) : ''} ${item.wishlist ? '· ⭐ Wishlist' : ''}</span>
+                                <button onclick="deleteDuplicateItem('${item.id}')" class="text-[10px] font-bold text-rose-400 hover:text-rose-300 flex-shrink-0 px-2 py-1">Remove</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function deleteDuplicateItem(id) {
+            const targetedItem = collection.find(item => item.id === id);
+            if (!targetedItem) return;
+            itemCacheForUndo = {...targetedItem};
+            collection = collection.filter(item => item.id !== id);
+            saveAndRender();
+            showUndoToastNotification(itemCacheForUndo);
+            renderDuplicatesContent(); // refresh the modal in place so it doesn't need reopening
         }
 
         function selectGenre(genre) { selectedGenre = genre; renderCollection(); }
@@ -1653,10 +1762,10 @@
             else { modal.classList.add('hidden'); document.body.style.overflow = ''; }
         }
 
-        function closeModal(event) { if (['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal', 'loanModal', 'statsModal'].includes(event.target.id)) toggleModal(event.target.id, false); }
+        function closeModal(event) { if (['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal', 'loanModal', 'statsModal', 'duplicatesModal'].includes(event.target.id)) toggleModal(event.target.id, false); }
 
         function renderCollection() {
-            updateStatsDashboard(); populateGenreFilterOptions();
+            updateStatsDashboard(); populateGenreFilterOptions(); populateFormatFilterOptions(); populateConditionFilterOptions();
             const grid = document.getElementById('mediaGrid'); grid.innerHTML = '';
             const localSearchTerm = document.getElementById('localSearch').value.toLowerCase();
             const sortSelection = document.getElementById('sortConfig').value;
@@ -1664,9 +1773,14 @@
             let filtered = collection.filter(item => {
                 const matchesType = (currentFilter === 'all' || item.type === currentFilter);
                 const matchesGenre = (selectedGenre === 'all' || (item.genres && item.genres.includes(selectedGenre)));
-                const matchesText = !localSearchTerm || item.title.toLowerCase().includes(localSearchTerm) || item.creator.toLowerCase().includes(localSearchTerm);
+                const matchesText = !localSearchTerm || item.title.toLowerCase().includes(localSearchTerm) || item.creator.toLowerCase().includes(localSearchTerm) || (item.meta && item.meta.toLowerCase().includes(localSearchTerm));
                 const matchesOwnership = currentOwnershipFilter === 'wishlist' ? !!item.wishlist : !item.wishlist;
-                return matchesType && matchesGenre && matchesText && matchesOwnership;
+                const matchesFormat = (selectedFormat === 'all' || item.format === selectedFormat);
+                const matchesCondition = (selectedCondition === 'all' || item.condition === selectedCondition);
+                const matchesLoan = selectedLoanFilter === 'all' ? true
+                    : selectedLoanFilter === 'lent' ? !!(item.loan && item.loan.borrower)
+                    : isLoanOverdue(item); // 'overdue'
+                return matchesType && matchesGenre && matchesText && matchesOwnership && matchesFormat && matchesCondition && matchesLoan;
             });
 
             filtered.sort((a, b) => {
