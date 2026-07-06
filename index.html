@@ -177,7 +177,7 @@
         </header>
 
         <!-- Stats Dashboard Grid -->
-        <section class="grid grid-cols-2 sm:grid-cols-4 gap-3.5 mb-6">
+        <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 mb-6">
             <div class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md">
                 <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Owned</p>
                 <p id="statTotal" class="text-2xl font-black text-slate-100">0</p>
@@ -185,6 +185,10 @@
             <div class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md">
                 <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Movies</p>
                 <p id="statMovies" class="text-2xl font-black text-rose-400">0</p>
+            </div>
+            <div class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md">
+                <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">TV Shows</p>
+                <p id="statTV" class="text-2xl font-black text-violet-400">0</p>
             </div>
             <div class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md">
                 <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">CDs</p>
@@ -228,6 +232,7 @@
                 <div class="flex flex-col sm:flex-row gap-3">
                     <select id="mediaType" class="w-full sm:w-auto bg-slate-900 border border-slate-700 text-slate-200 rounded-xl px-3 py-3 text-base font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer">
                         <option value="movie">Movie 🎬</option>
+                        <option value="tv">TV Show 📺</option>
                         <option value="music">CD 🎵</option>
                     </select>
                     <input id="searchQuery" type="text" placeholder="Enter title or artist..." 
@@ -253,6 +258,7 @@
                 <div class="flex gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800/60 w-full sm:w-auto">
                     <button onclick="filterMedia('all')" id="tab-all" class="flex-1 sm:flex-none text-xs font-bold px-4 py-2 rounded-md bg-indigo-600/20 text-indigo-300 transition-all">All</button>
                     <button onclick="filterMedia('movie')" id="tab-movie" class="flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-md text-slate-400 hover:text-slate-200 transition-all">Movies</button>
+                    <button onclick="filterMedia('tv')" id="tab-tv" class="flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-md text-slate-400 hover:text-slate-200 transition-all">TV</button>
                     <button onclick="filterMedia('music')" id="tab-music" class="flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-md text-slate-400 hover:text-slate-200 transition-all">CDs</button>
                 </div>
                 <div class="flex gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800/60 w-full sm:w-auto">
@@ -436,6 +442,7 @@
                 <div class="flex flex-col gap-3">
                     <select id="manType" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-base text-white">
                         <option value="movie">Type: Movie</option>
+                        <option value="tv">Type: TV Show</option>
                         <option value="music">Type: Music / CD</option>
                     </select>
                     <input type="text" id="manTitle" placeholder="Title (Required)" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-base text-white">
@@ -755,7 +762,7 @@
                         const targetLine = fragments[1] ? fragments[1].split('\n')[0] : '';
                         if (targetLine) item.genres = targetLine.split(',').map(g => g.trim()).filter(g => g);
                     }
-                    if (item.genres.length === 0) item.genres = item.type === 'movie' ? ['Movie'] : ['Music'];
+                    if (item.genres.length === 0) item.genres = item.type === 'movie' ? ['Movie'] : item.type === 'tv' ? ['TV Show'] : ['Music'];
                 }
                 if (item.personalRating === undefined) { item.personalRating = 0; changesMade = true; }
                 // Migrate the old plain-string loanStatus into a structured loan object
@@ -858,9 +865,10 @@
             submitBtn.innerText = 'Searching...';
 
             try {
-                if (type === 'movie') {
+                if (type === 'movie' || type === 'tv') {
                     if (!omdbKey) throw new Error('Please enter OMDb key below.');
-                    const param = query.startsWith('tt') ? `i=${query}` : `s=${encodeURIComponent(query)}&type=movie`;
+                    const omdbType = type === 'tv' ? 'series' : 'movie';
+                    const param = query.startsWith('tt') ? `i=${query}` : `s=${encodeURIComponent(query)}&type=${omdbType}`;
                     const response = await fetch(`https://www.omdbapi.com/?${param}&apikey=${omdbKey}`);
                     const data = await response.json();
                     
@@ -916,11 +924,19 @@
             try {
                 const response = await fetch(`https://www.omdbapi.com/?i=${imdbID}&apikey=${omdbKey}`);
                 const data = await response.json();
-                const fullDetails = `Plot:\n${data.Plot}\n\nActors: ${data.Actors}\nRuntime: ${data.Runtime}\nGenre: ${data.Genre}`;
+                const resolvedType = data.Type === 'series' ? 'tv' : 'movie';
+                // OMDb usually returns "N/A" for Director on TV series (credit lives under
+                // Writer/creator instead), so fall back sensibly rather than showing "N/A".
+                const creator = (data.Director && data.Director !== 'N/A') ? data.Director
+                    : (data.Writer && data.Writer !== 'N/A') ? data.Writer : 'Unknown';
+                let fullDetails = `Plot:\n${data.Plot}\n\nActors: ${data.Actors}\nRuntime: ${data.Runtime}\nGenre: ${data.Genre}`;
+                if (resolvedType === 'tv' && data.totalSeasons && data.totalSeasons !== 'N/A') {
+                    fullDetails += `\nSeasons: ${data.totalSeasons}`;
+                }
                 temporaryPreviewItem = {
-                    id: data.imdbID, type: 'movie', title: data.Title, creator: data.Director, year: data.Year,
+                    id: data.imdbID, type: resolvedType, title: data.Title, creator: creator, year: data.Year,
                     image: data.Poster !== "N/A" ? data.Poster : 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300',
-                    meta: fullDetails, genres: data.Genre ? normalizeGenres(data.Genre.split(',')) : ['Movie'],
+                    meta: fullDetails, genres: data.Genre ? normalizeGenres(data.Genre.split(',')) : [resolvedType === 'tv' ? 'TV Show' : 'Movie'],
                     imdbRating: data.imdbRating !== "N/A" ? data.imdbRating : null, imdbID: data.imdbID, personalRating: 0,
                     loanStatus: '', loan: { borrower: '', lentDate: '', dueDate: '' }, wishlist: false, format: '', condition: ''
                 };
@@ -991,6 +1007,24 @@
             return /^https?:\/\//i.test(url) || /^data:image\//i.test(url);
         }
 
+        // Shared placeholder art/genre fallback by media type — movie and tv share the
+        // same generic placeholder image since both are screen-based visual media.
+        function defaultImageForType(type) {
+            return type === 'music'
+                ? 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300'
+                : 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300';
+        }
+        function defaultGenreForType(type) {
+            if (type === 'movie') return ['Movie'];
+            if (type === 'tv') return ['TV Show'];
+            return ['Music'];
+        }
+        function iconForType(type) {
+            if (type === 'movie') return '🎬';
+            if (type === 'tv') return '📺';
+            return '🎵';
+        }
+
         function saveManualEntry() {
             const title = document.getElementById('manTitle').value.trim();
             if (!title) return alert("Title required!");
@@ -1004,9 +1038,9 @@
 
             const creator = document.getElementById('manCreator').value.trim() || 'Unknown';
             const year = document.getElementById('manYear').value.trim() || 'N/A';
-            const image = imgInput ? imgInput : (type === 'movie' ? 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300' : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300');
+            const image = imgInput ? imgInput : defaultImageForType(type);
             const meta = document.getElementById('manDetails').value.trim() || 'Manual custom archive entry parameters.';
-            const genres = genresStr ? normalizeGenres(genresStr.split(',')) : (type === 'movie' ? ['Movie'] : ['Music']);
+            const genres = genresStr ? normalizeGenres(genresStr.split(',')) : defaultGenreForType(type);
             const format = document.getElementById('manFormat').value;
             const condition = document.getElementById('manCondition').value;
             const wishlist = document.getElementById('manWishlist').checked;
@@ -1177,6 +1211,17 @@
                 }
             } catch (e) {}
 
+            try {
+                const tvDir = await localDirectoryHandle.getDirectoryHandle('TV Shows', { create: false });
+                const fileHandle = await tvDir.getFileHandle('tv_backup.json', { create: false });
+                const file = await fileHandle.getFile();
+                const text = await file.text();
+                if (text) {
+                    const data = JSON.parse(text);
+                    if (Array.isArray(data)) loadedCollection = loadedCollection.concat(data);
+                }
+            } catch (e) {}
+
             if (loadedCollection.length === 0) {
                 try {
                     const fileHandle = await localDirectoryHandle.getFileHandle('media_backup.json', { create: false });
@@ -1201,6 +1246,7 @@
             if (!localDirectoryHandle || isAwaitingReauthorization) return;
             
             const movieItems = collection.filter(item => item.type === 'movie');
+            const tvItems = collection.filter(item => item.type === 'tv');
             const musicItems = collection.filter(item => item.type === 'music');
             
             try {
@@ -1209,6 +1255,12 @@
                 const movieWritable = await movieFile.createWritable();
                 await movieWritable.write(JSON.stringify(movieItems, null, 2));
                 await movieWritable.close();
+
+                const tvDir = await localDirectoryHandle.getDirectoryHandle('TV Shows', { create: true });
+                const tvFile = await tvDir.getFileHandle('tv_backup.json', { create: true });
+                const tvWritable = await tvFile.createWritable();
+                await tvWritable.write(JSON.stringify(tvItems, null, 2));
+                await tvWritable.close();
 
                 const musicDir = await localDirectoryHandle.getDirectoryHandle('Music', { create: true });
                 const musicFile = await musicDir.getFileHandle('music_backup.json', { create: true });
@@ -1224,7 +1276,7 @@
             if (undoTimeoutTimer) clearTimeout(undoTimeoutTimer);
             const toast = document.getElementById('undoToast');
             document.getElementById('undoToastTitle').innerText = item.title;
-            document.getElementById('undoToastIcon').innerText = item.type === 'movie' ? '🎬' : '🎵';
+            document.getElementById('undoToastIcon').innerText = iconForType(item.type);
             toast.classList.remove('translate-y-24', 'opacity-0', 'pointer-events-none');
             toast.classList.add('translate-y-0', 'opacity-100');
             undoTimeoutTimer = setTimeout(() => { hideUndoToastNotification(); }, 5000);
@@ -1341,6 +1393,7 @@
             const owned = collection.filter(item => !item.wishlist);
             document.getElementById('statTotal').innerText = owned.length;
             document.getElementById('statMovies').innerText = owned.filter(item => item.type === 'movie').length;
+            document.getElementById('statTV').innerText = owned.filter(item => item.type === 'tv').length;
             document.getElementById('statMusic').innerText = owned.filter(item => item.type === 'music').length;
             document.getElementById('statWishlist').innerText = collection.filter(item => item.wishlist).length;
         }
@@ -1507,7 +1560,7 @@
         
         function filterMedia(type) {
             currentFilter = type;
-            ['all', 'movie', 'music'].forEach(t => {
+            ['all', 'movie', 'tv', 'music'].forEach(t => {
                 document.getElementById(`tab-${t}`).className = (t === type) 
                     ? "flex-1 sm:flex-none text-xs font-bold px-4 py-2 rounded-md bg-indigo-600/20 text-indigo-300 transition-all" 
                     : "flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-md text-slate-400 hover:text-slate-200 transition-all";
@@ -1615,11 +1668,11 @@
                     let skipped = 0;
                     importedData.forEach(item => {
                         if (item && typeof item === 'object' && typeof item.title === 'string' && item.title.trim() &&
-                            (item.type === 'movie' || item.type === 'music')) {
-                            if (!item.id) item.id = generateLocalId(item.type === 'movie' ? 'imp' : 'imp');
+                            (item.type === 'movie' || item.type === 'tv' || item.type === 'music')) {
+                            if (!item.id) item.id = generateLocalId('imp');
                             if (!item.creator) item.creator = 'Unknown';
                             if (!item.year) item.year = 'N/A';
-                            if (!isSafeImageUrl(item.image)) item.image = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300';
+                            if (!isSafeImageUrl(item.image)) item.image = defaultImageForType(item.type);
                             validItems.push(item);
                         } else {
                             skipped++;
@@ -1693,7 +1746,7 @@
                         if (!title) { skipped++; continue; }
 
                         const rawType = idxType !== -1 ? (r[idxType] || '').trim().toLowerCase() : '';
-                        const type = rawType === 'music' ? 'music' : 'movie'; // default to movie if missing/unrecognized
+                        const type = rawType === 'music' ? 'music' : (rawType === 'tv' || rawType === 'series') ? 'tv' : 'movie'; // default to movie if missing/unrecognized
                         const creator = idxCreator !== -1 ? (r[idxCreator] || '').trim() : '';
                         const genresStr = idxGenres !== -1 ? (r[idxGenres] || '') : '';
                         const ratingNum = idxRating !== -1 ? parseInt(r[idxRating], 10) : 0;
@@ -1728,9 +1781,9 @@
                                 id: generateLocalId('csv'), type, title,
                                 creator: creator || 'Unknown',
                                 year: (idxYear !== -1 && r[idxYear]) ? r[idxYear].trim() : 'N/A',
-                                image: image || (type === 'movie' ? 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300' : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300'),
+                                image: image || defaultImageForType(type),
                                 meta: meta || 'Imported from CSV.',
-                                genres: genresStr ? normalizeGenres(genresStr.split(';')) : (type === 'movie' ? ['Movie'] : ['Music']),
+                                genres: genresStr ? normalizeGenres(genresStr.split(';')) : defaultGenreForType(type),
                                 personalRating: rating, loanStatus: borrower, loan: { borrower, lentDate, dueDate },
                                 wishlist, format, condition
                             });
@@ -1772,6 +1825,10 @@
                 badge.innerText = '🎬 Movie'; badge.className = 'text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 inline-block';
                 if (item.imdbRating) { document.getElementById('imdbScore').innerText = item.imdbRating; ratingBadge.classList.remove('hidden'); }
                 if (item.imdbID && !isPreviewMode) { document.getElementById('imdbExternalLink').href = `https://www.imdb.com/title/${item.imdbID}/`; imdbLinkContainer.classList.remove('hidden'); }
+            } else if (item.type === 'tv') {
+                badge.innerText = '📺 TV Show'; badge.className = 'text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded bg-violet-500/10 border border-violet-500/20 text-violet-400 inline-block';
+                if (item.imdbRating) { document.getElementById('imdbScore').innerText = item.imdbRating; ratingBadge.classList.remove('hidden'); }
+                if (item.imdbID && !isPreviewMode) { document.getElementById('imdbExternalLink').href = `https://www.imdb.com/title/${item.imdbID}/`; imdbLinkContainer.classList.remove('hidden'); }
             } else {
                 badge.innerText = '🎵 Music'; badge.className = 'text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded bg-sky-500/10 border border-sky-500/20 text-sky-400 inline-block';
             }
@@ -1781,7 +1838,7 @@
                 document.getElementById('previewWishlistCheck').checked = false;
                 previewBadge.classList.remove('hidden'); previewApprovalContainer.classList.remove('hidden');
             } else {
-                if (item.type === 'movie' && item.imdbID) imdbLinkContainer.classList.remove('hidden');
+                if ((item.type === 'movie' || item.type === 'tv') && item.imdbID) imdbLinkContainer.classList.remove('hidden');
                 currentDetailItemId = item.id;
                 populateOwnedItemControls(item);
             }
@@ -1905,7 +1962,7 @@
                         <div class="relative h-36 w-full bg-slate-950 flex items-center justify-center overflow-hidden border-b border-slate-900/60">
                             <img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title)}" class="w-full h-full object-contain" onerror="this.onerror=null; this.src='https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=300';">
                             <span class="absolute top-2 right-2 text-[9px] font-black tracking-wider uppercase px-2 py-0.5 rounded backdrop-blur-md bg-slate-900/60 text-slate-300">
-                                ${item.type === 'movie' ? '🎬' : '🎵'}
+                                ${iconForType(item.type)}
                             </span>
                             ${item.wishlist ? `<span class="absolute top-2 left-2 text-[9px] font-black tracking-wider uppercase px-2 py-0.5 rounded backdrop-blur-md bg-amber-500/80 text-slate-950">⭐ Wishlist</span>` : ''}
                         </div>
