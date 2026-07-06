@@ -178,26 +178,26 @@
 
         <!-- Stats Dashboard Grid -->
         <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 mb-6">
-            <div class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md">
+            <button type="button" onclick="selectStatFilter('all', 'vault')" aria-label="Show all owned items" class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md cursor-pointer hover:border-indigo-500/60 hover:from-slate-800/70 hover:to-slate-900/70 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
                 <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Owned</p>
                 <p id="statTotal" class="text-2xl font-black text-slate-100">0</p>
-            </div>
-            <div class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md">
+            </button>
+            <button type="button" onclick="selectStatFilter('movie', 'vault')" aria-label="Show owned movies" class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md cursor-pointer hover:border-rose-500/60 hover:from-slate-800/70 hover:to-slate-900/70 focus:outline-none focus:ring-2 focus:ring-rose-500 transition-all">
                 <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Movies</p>
                 <p id="statMovies" class="text-2xl font-black text-rose-400">0</p>
-            </div>
-            <div class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md">
+            </button>
+            <button type="button" onclick="selectStatFilter('tv', 'vault')" aria-label="Show owned TV shows" class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md cursor-pointer hover:border-violet-500/60 hover:from-slate-800/70 hover:to-slate-900/70 focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all">
                 <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">TV Shows</p>
                 <p id="statTV" class="text-2xl font-black text-violet-400">0</p>
-            </div>
-            <div class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md">
+            </button>
+            <button type="button" onclick="selectStatFilter('music', 'vault')" aria-label="Show owned CDs" class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md cursor-pointer hover:border-sky-500/60 hover:from-slate-800/70 hover:to-slate-900/70 focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all">
                 <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">CDs</p>
                 <p id="statMusic" class="text-2xl font-black text-sky-400">0</p>
-            </div>
-            <div class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md">
+            </button>
+            <button type="button" onclick="selectStatFilter('all', 'wishlist')" aria-label="Show wishlist items" class="bg-gradient-to-b from-slate-800/40 to-slate-900/40 border border-slate-800 rounded-xl p-3.5 text-center shadow-md cursor-pointer hover:border-amber-500/60 hover:from-slate-800/70 hover:to-slate-900/70 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all">
                 <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Wishlist</p>
                 <p id="statWishlist" class="text-2xl font-black text-amber-400">0</p>
-            </div>
+            </button>
         </section>
 
         <!-- Add Media Tool Panel -->
@@ -1578,6 +1578,22 @@
                 ? "flex-1 sm:flex-none text-xs font-bold px-4 py-2 rounded-md bg-indigo-600/20 text-indigo-300 transition-all"
                 : "flex-1 sm:flex-none text-xs font-semibold px-4 py-2 rounded-md text-slate-400 hover:text-slate-200 transition-all";
             renderCollection();
+        }
+
+        // Drives the clickable stat tiles (Owned/Movies/TV Shows/CDs/Wishlist): sets
+        // both the media-type and ownership filters to match the tile, clears any
+        // leftover text/genre/format/condition/loan filters that could otherwise hide
+        // the very items the tile promised to show, then scrolls the grid into view.
+        function selectStatFilter(mediaType, ownershipMode) {
+            document.getElementById('localSearch').value = '';
+            selectedGenre = 'all';
+            selectedFormat = 'all';
+            selectedCondition = 'all';
+            selectedLoanFilter = 'all';
+            document.getElementById('loanFilter').value = 'all';
+            filterOwnership(ownershipMode);
+            filterMedia(mediaType);
+            document.getElementById('mediaGrid').scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         function exportToFile() {
