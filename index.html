@@ -1242,36 +1242,50 @@
             }
         }
 
-        async function autoSaveToMacDirectory() {
-            if (!localDirectoryHandle || isAwaitingReauthorization) return;
-            
-            const movieItems = collection.filter(item => item.type === 'movie');
-            const tvItems = collection.filter(item => item.type === 'tv');
-            const musicItems = collection.filter(item => item.type === 'music');
-            
-            try {
-                const movieDir = await localDirectoryHandle.getDirectoryHandle('Movies', { create: true });
-                const movieFile = await movieDir.getFileHandle('movies_backup.json', { create: true });
-                const movieWritable = await movieFile.createWritable();
-                await movieWritable.write(JSON.stringify(movieItems, null, 2));
-                await movieWritable.close();
+        let mediaVaultSaveInProgress = false;
+let mediaVaultSaveQueued = false;
 
-                const tvDir = await localDirectoryHandle.getDirectoryHandle('TV Shows', { create: true });
-                const tvFile = await tvDir.getFileHandle('tv_backup.json', { create: true });
-                const tvWritable = await tvFile.createWritable();
-                await tvWritable.write(JSON.stringify(tvItems, null, 2));
-                await tvWritable.close();
+async function autoSaveToMacDirectory() {
+    if (!localDirectoryHandle || isAwaitingReauthorization) return;
 
-                const musicDir = await localDirectoryHandle.getDirectoryHandle('Music', { create: true });
-                const musicFile = await musicDir.getFileHandle('music_backup.json', { create: true });
-                const musicWritable = await musicFile.createWritable();
-                await musicWritable.write(JSON.stringify(musicItems, null, 2));
-                await musicWritable.close();
-            } catch (err) {
-                console.error("Autosave storage access dropped during permission reset cycle.", err);
-            }
+    if (mediaVaultSaveInProgress) {
+        mediaVaultSaveQueued = true;
+        return;
+    }
+    mediaVaultSaveInProgress = true;
+
+    const movieItems = collection.filter(item => item.type === 'movie');
+    const tvItems = collection.filter(item => item.type === 'tv');
+    const musicItems = collection.filter(item => item.type === 'music');
+
+    try {
+        const movieDir = await localDirectoryHandle.getDirectoryHandle('Movies', { create: true });
+        const movieFile = await movieDir.getFileHandle('movies_backup.json', { create: true });
+        const movieWritable = await movieFile.createWritable();
+        await movieWritable.write(JSON.stringify(movieItems, null, 2));
+        await movieWritable.close();
+
+        const tvDir = await localDirectoryHandle.getDirectoryHandle('TV Shows', { create: true });
+        const tvFile = await tvDir.getFileHandle('tv_backup.json', { create: true });
+        const tvWritable = await tvFile.createWritable();
+        await tvWritable.write(JSON.stringify(tvItems, null, 2));
+        await tvWritable.close();
+
+        const musicDir = await localDirectoryHandle.getDirectoryHandle('Music', { create: true });
+        const musicFile = await musicDir.getFileHandle('music_backup.json', { create: true });
+        const musicWritable = await musicFile.createWritable();
+        await musicWritable.write(JSON.stringify(musicItems, null, 2));
+        await musicWritable.close();
+    } catch (err) {
+        console.error("Autosave storage access dropped during permission reset cycle.", err);
+    } finally {
+        mediaVaultSaveInProgress = false;
+        if (mediaVaultSaveQueued) {
+            mediaVaultSaveQueued = false;
+            autoSaveToMacDirectory();
         }
-
+    }
+}
         function showUndoToastNotification(item) {
             if (undoTimeoutTimer) clearTimeout(undoTimeoutTimer);
             const toast = document.getElementById('undoToast');
