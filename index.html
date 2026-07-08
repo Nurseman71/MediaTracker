@@ -1687,40 +1687,58 @@ async function autoSaveToMacDirectory() {
 
         document.getElementById('importFile').addEventListener('change', importFromFile);
         function importFromFile(event) {
-            const file = event.target.files[0]; if (!file) return;
-            const shadowReader = new FileReader();
-            shadowReader.onload = function(e) {
-                try {
-                    const importedData = JSON.parse(e.target.result);
-                    if (!Array.isArray(importedData)) { alert("Import failed: file must contain a list of items."); return; }
+    const file = event.target.files[0]; if (!file) return;
+    const shadowReader = new FileReader();
+    shadowReader.onload = function(e) {
+        try {
+            const importedData = JSON.parse(e.target.result);
+            if (!Array.isArray(importedData)) { alert("Import failed: file must contain a list of items."); return; }
 
-                    const validItems = [];
-                    let skipped = 0;
-                    importedData.forEach(item => {
-                        if (item && typeof item === 'object' && typeof item.title === 'string' && item.title.trim() &&
-                            (item.type === 'movie' || item.type === 'tv' || item.type === 'music')) {
-                            if (!item.id) item.id = generateLocalId('imp');
-                            if (!item.creator) item.creator = 'Unknown';
-                            if (!item.year) item.year = 'N/A';
-                            if (!isSafeImageUrl(item.image)) item.image = defaultImageForType(item.type);
-                            validItems.push(item);
-                        } else {
-                            skipped++;
-                        }
-                    });
+            const validItems = [];
+            let skipped = 0;
+            importedData.forEach(item => {
+                if (item && typeof item === 'object' && typeof item.title === 'string' && item.title.trim() &&
+                    (item.type === 'movie' || item.type === 'tv' || item.type === 'music')) {
+                    if (!item.id) item.id = generateLocalId('imp');
+                    if (!item.creator) item.creator = 'Unknown';
+                    if (!item.year) item.year = 'N/A';
+                    if (!isSafeImageUrl(item.image)) item.image = defaultImageForType(item.type);
+                    validItems.push(item);
+                } else {
+                    skipped++;
+                }
+            });
 
-                    if (validItems.length === 0) { alert("Import failed: no valid items found in that file."); return; }
+            if (validItems.length === 0) { alert("Import failed: no valid items found in that file."); return; }
 
-                    collection = validItems;
-                    runDataMigrationChecks();
-                    saveAndRender();
-                    alert(skipped > 0
-                        ? `Imported ${validItems.length} item(s). Skipped ${skipped} entry/entries that were missing required fields.`
-                        : `Imported ${validItems.length} item(s)!`);
-                } catch (err) { alert("Import failed: that file isn't valid JSON."); }
-            };
-            shadowReader.readAsText(file);
-        }
+            // Merge into the EXISTING collection instead of replacing it —
+            // an item whose id already exists gets updated in place,
+            // everything else gets added as new, so importing a file
+            // never wipes out what's already in the vault.
+            let added = 0, updated = 0;
+            validItems.forEach(importedItem => {
+                const existingIndex = collection.findIndex(existing => existing.id === importedItem.id);
+                if (existingIndex !== -1) {
+                    collection[existingIndex] = importedItem;
+                    updated++;
+                } else {
+                    collection.push(importedItem);
+                    added++;
+                }
+            });
+
+            runDataMigrationChecks();
+            saveAndRender();
+            let message = `Added ${added} new item(s)`;
+            if (updated > 0) message += `, updated ${updated} existing item(s)`;
+            message += skipped > 0
+                ? `. Skipped ${skipped} entry/entries that were missing required fields.`
+                : '.';
+            alert(message);
+        } catch (err) { alert("Import failed: that file isn't valid JSON."); }
+    };
+    shadowReader.readAsText(file);
+}
 
         // Minimal RFC 4180 CSV parser: handles quoted fields, escaped ("") quotes,
         // and commas/newlines inside quoted fields. Returns an array of row arrays.
