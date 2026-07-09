@@ -846,9 +846,14 @@
                 // edits win on an item that's changed on both sides.
                 const localLastModified = parseInt(localStorage.getItem('collectionLastModified') || '0', 10);
 
-                const getResponse = await fetch(`${url}/api/collection`, {
-                    headers: { 'X-Sync-Token': token }
-                });
+                // The token travels as a URL query param, not a custom header —
+                // a custom header would make the browser send a CORS "preflight"
+                // check first, and iOS Safari has long-standing, well-documented
+                // problems with exactly that combination. Plain GET/POST with no
+                // custom headers sidesteps the whole category of bug.
+                const encodedToken = encodeURIComponent(token);
+
+                const getResponse = await fetch(`${url}/api/collection?token=${encodedToken}`);
                 if (!getResponse.ok) {
                     throw new Error(`Server returned ${getResponse.status} — check the URL and token.`);
                 }
@@ -893,16 +898,19 @@
 
                 // Push the merged result back up, so the server (and therefore
                 // any other device) also picks up anything that was only
-                // local before this, along with a fresh timestamp.
+                // local before this, along with a fresh timestamp. Content-Type
+                // text/plain (not application/json) keeps this a "simple"
+                // request too — the server parses the body as JSON regardless
+                // of what content type it's declared as.
                 const putBody = {
                     movies: collection.filter(item => item.type === 'movie'),
                     tv: collection.filter(item => item.type === 'tv'),
                     music: collection.filter(item => item.type === 'music'),
                     lastModified: Date.now()
                 };
-                const postResponse = await fetch(`${url}/api/collection`, {
+                const postResponse = await fetch(`${url}/api/collection?token=${encodedToken}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Sync-Token': token },
+                    headers: { 'Content-Type': 'text/plain' },
                     body: JSON.stringify(putBody)
                 });
                 if (!postResponse.ok) {
