@@ -841,6 +841,11 @@
             statusEl.textContent = '';
 
             try {
+                // Read this device's own last-modified timestamp BEFORE anything
+                // below has a chance to update it — this is what decides whose
+                // edits win on an item that's changed on both sides.
+                const localLastModified = parseInt(localStorage.getItem('collectionLastModified') || '0', 10);
+
                 const getResponse = await fetch(`${url}/api/collection`, {
                     headers: { 'X-Sync-Token': token }
                 });
@@ -848,10 +853,19 @@
                     throw new Error(`Server returned ${getResponse.status} — check the URL and token.`);
                 }
                 const remote = await getResponse.json();
+                const remoteLastModified = remote.lastModified || 0;
 
-                // Merge server data into the local collection by id — same logic as
-                // the file Import feature, so an item that exists on both sides gets
-                // the server's version, and anything local-only is kept as-is.
+                // Whichever side has the more recent overall change wins on an
+                // item that exists on both — this is a whole-collection
+                // timestamp, not a per-item one, so it's a real but rare edge
+                // case: if you edit ITEM A on one device and, before syncing,
+                // edit an unrelated ITEM B on the other device, the "who's
+                // newer overall" check could let the wrong side's edit to
+                // ITEM A win. Fine for how this actually gets used in
+                // practice (rate a few things, sync); not a general
+                // conflict-resolution system.
+                const localIsNewer = localLastModified > remoteLastModified;
+
                 const remoteItems = [
                     ...(remote.movies || []),
                     ...(remote.tv || []),
@@ -860,8 +874,16 @@
                 remoteItems.forEach(remoteItem => {
                     const existingIndex = collection.findIndex(existing => existing.id === remoteItem.id);
                     if (existingIndex !== -1) {
-                        collection[existingIndex] = remoteItem;
+                        // Item exists on both sides. Only let the server's
+                        // version win if the server side is actually newer —
+                        // otherwise this device's edit is the more recent one
+                        // and should be kept, not silently overwritten.
+                        if (!localIsNewer) {
+                            collection[existingIndex] = remoteItem;
+                        }
                     } else {
+                        // Genuinely new from the other side — not a conflict,
+                        // always take it.
                         collection.push(remoteItem);
                     }
                 });
@@ -869,12 +891,14 @@
                 runDataMigrationChecks();
                 saveAndRender();
 
-                // Push the merged result back up, so the server (and therefore any
-                // other device) also picks up anything that was only local before this.
+                // Push the merged result back up, so the server (and therefore
+                // any other device) also picks up anything that was only
+                // local before this, along with a fresh timestamp.
                 const putBody = {
                     movies: collection.filter(item => item.type === 'movie'),
                     tv: collection.filter(item => item.type === 'tv'),
-                    music: collection.filter(item => item.type === 'music')
+                    music: collection.filter(item => item.type === 'music'),
+                    lastModified: Date.now()
                 };
                 const postResponse = await fetch(`${url}/api/collection`, {
                     method: 'POST',
@@ -1509,6 +1533,7 @@ async function autoSaveToMacDirectory() {
         // --- SAVE AND PORT DATA PIPELINES ---
         function saveAndRender() {
             safeSetLocalStorage('myMediaCollection', JSON.stringify(collection));
+            safeSetLocalStorage('collectionLastModified', String(Date.now()));
             renderCollection();
             autoSaveToMacDirectory();
         }
