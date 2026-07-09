@@ -695,6 +695,13 @@
 
         // --- SYSTEM CORE STATES ---
         let collection = JSON.parse(localStorage.getItem('myMediaCollection')) || [];
+        // Tracks deletions for sync purposes — { id, deletedAt } per removed
+        // item. Without this, a sync can't tell "this item is missing
+        // because it was deliberately deleted" apart from "this item is
+        // missing because it's never been seen before," and ends up
+        // silently resurrecting anything you delete on one device the
+        // next time it syncs.
+        let deletedTombstones = JSON.parse(localStorage.getItem('deletedTombstones')) || [];
         let currentFilter = 'all';
         let selectedGenre = 'all';
         let selectedLoanFilter = 'all'; // 'all' | 'lent' | 'overdue'
@@ -868,8 +875,13 @@
                 // newer overall" check could let the wrong side's edit to
                 // ITEM A win. Fine for how this actually gets used in
                 // practice (rate a few things, sync); not a general
-                // conflict-resolution system.
+                // conflict-resolution system. The same rule applies uniformly
+                // to deletions too — see the tombstone handling below.
                 const localIsNewer = localLastModified > remoteLastModified;
+
+                const localTombstoneMap = new Map(deletedTombstones.map(t => [t.id, t.deletedAt]));
+                const remoteTombstones = remote.tombstones || [];
+                const remoteTombstoneMap = new Map(remoteTombstones.map(t => [t.id, t.deletedAt]));
 
                 const remoteItems = [
                     ...(remote.movies || []),
@@ -877,6 +889,18 @@
                     ...(remote.music || [])
                 ];
                 remoteItems.forEach(remoteItem => {
+                    if (localTombstoneMap.has(remoteItem.id)) {
+                        // We deleted this item locally. Only let the server's
+                        // copy come back if the server side is genuinely
+                        // newer overall — otherwise our deletion is the more
+                        // recent action and should stick, not get silently
+                        // undone by a sync.
+                        if (!localIsNewer) {
+                            collection.push(remoteItem);
+                            deletedTombstones = deletedTombstones.filter(t => t.id !== remoteItem.id);
+                        }
+                        return;
+                    }
                     const existingIndex = collection.findIndex(existing => existing.id === remoteItem.id);
                     if (existingIndex !== -1) {
                         // Item exists on both sides. Only let the server's
@@ -893,20 +917,37 @@
                     }
                 });
 
+                // The other side may have deleted something we still have —
+                // propagate that deletion locally too, same "who's newer"
+                // rule as everything else, so a sync can't resurrect on one
+                // side what was properly deleted on the other.
+                remoteTombstoneMap.forEach((deletedAt, id) => {
+                    if (!localIsNewer) {
+                        collection = collection.filter(item => item.id !== id);
+                    }
+                    if (!localTombstoneMap.has(id) || localTombstoneMap.get(id) < deletedAt) {
+                        deletedTombstones = deletedTombstones.filter(t => t.id !== id);
+                        deletedTombstones.push({ id, deletedAt });
+                    }
+                });
+                safeSetLocalStorage('deletedTombstones', JSON.stringify(deletedTombstones));
+
                 runDataMigrationChecks();
                 saveAndRender();
 
                 // Push the merged result back up, so the server (and therefore
                 // any other device) also picks up anything that was only
-                // local before this, along with a fresh timestamp. Content-Type
-                // text/plain (not application/json) keeps this a "simple"
-                // request too — the server parses the body as JSON regardless
-                // of what content type it's declared as.
+                // local before this, along with a fresh timestamp and the
+                // merged tombstone list. Content-Type text/plain (not
+                // application/json) keeps this a "simple" request too — the
+                // server parses the body as JSON regardless of what content
+                // type it's declared as.
                 const putBody = {
                     movies: collection.filter(item => item.type === 'movie'),
                     tv: collection.filter(item => item.type === 'tv'),
                     music: collection.filter(item => item.type === 'music'),
-                    lastModified: Date.now()
+                    lastModified: Date.now(),
+                    tombstones: deletedTombstones
                 };
                 const postResponse = await fetch(`${url}/api/collection?token=${encodedToken}`, {
                     method: 'POST',
@@ -1235,6 +1276,9 @@
             if (!targetedItem) return;
             itemCacheForUndo = {...targetedItem};
             collection = collection.filter(item => item.id !== id);
+            deletedTombstones = deletedTombstones.filter(t => t.id !== id);
+            deletedTombstones.push({ id, deletedAt: Date.now() });
+            safeSetLocalStorage('deletedTombstones', JSON.stringify(deletedTombstones));
             saveAndRender();
             showUndoToastNotification(itemCacheForUndo);
         }
@@ -1448,7 +1492,10 @@ async function autoSaveToMacDirectory() {
 
         function triggerUndoAction() {
             if (!itemCacheForUndo) return;
-            collection.push(itemCacheForUndo); saveAndRender(); hideUndoToastNotification();
+            collection.push(itemCacheForUndo);
+            deletedTombstones = deletedTombstones.filter(t => t.id !== itemCacheForUndo.id);
+            safeSetLocalStorage('deletedTombstones', JSON.stringify(deletedTombstones));
+            saveAndRender(); hideUndoToastNotification();
         }
 
         function updateRating(id, stars, event) {
@@ -1709,6 +1756,9 @@ async function autoSaveToMacDirectory() {
             if (!targetedItem) return;
             itemCacheForUndo = {...targetedItem};
             collection = collection.filter(item => item.id !== id);
+            deletedTombstones = deletedTombstones.filter(t => t.id !== id);
+            deletedTombstones.push({ id, deletedAt: Date.now() });
+            safeSetLocalStorage('deletedTombstones', JSON.stringify(deletedTombstones));
             saveAndRender();
             showUndoToastNotification(itemCacheForUndo);
             renderDuplicatesContent(); // refresh the modal in place so it doesn't need reopening
