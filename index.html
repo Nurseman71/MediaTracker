@@ -1242,50 +1242,36 @@
             }
         }
 
-        let mediaVaultSaveInProgress = false;
-let mediaVaultSaveQueued = false;
+        async function autoSaveToMacDirectory() {
+            if (!localDirectoryHandle || isAwaitingReauthorization) return;
+            
+            const movieItems = collection.filter(item => item.type === 'movie');
+            const tvItems = collection.filter(item => item.type === 'tv');
+            const musicItems = collection.filter(item => item.type === 'music');
+            
+            try {
+                const movieDir = await localDirectoryHandle.getDirectoryHandle('Movies', { create: true });
+                const movieFile = await movieDir.getFileHandle('movies_backup.json', { create: true });
+                const movieWritable = await movieFile.createWritable();
+                await movieWritable.write(JSON.stringify(movieItems, null, 2));
+                await movieWritable.close();
 
-async function autoSaveToMacDirectory() {
-    if (!localDirectoryHandle || isAwaitingReauthorization) return;
+                const tvDir = await localDirectoryHandle.getDirectoryHandle('TV Shows', { create: true });
+                const tvFile = await tvDir.getFileHandle('tv_backup.json', { create: true });
+                const tvWritable = await tvFile.createWritable();
+                await tvWritable.write(JSON.stringify(tvItems, null, 2));
+                await tvWritable.close();
 
-    if (mediaVaultSaveInProgress) {
-        mediaVaultSaveQueued = true;
-        return;
-    }
-    mediaVaultSaveInProgress = true;
-
-    const movieItems = collection.filter(item => item.type === 'movie');
-    const tvItems = collection.filter(item => item.type === 'tv');
-    const musicItems = collection.filter(item => item.type === 'music');
-
-    try {
-        const movieDir = await localDirectoryHandle.getDirectoryHandle('Movies', { create: true });
-        const movieFile = await movieDir.getFileHandle('movies_backup.json', { create: true });
-        const movieWritable = await movieFile.createWritable();
-        await movieWritable.write(JSON.stringify(movieItems, null, 2));
-        await movieWritable.close();
-
-        const tvDir = await localDirectoryHandle.getDirectoryHandle('TV Shows', { create: true });
-        const tvFile = await tvDir.getFileHandle('tv_backup.json', { create: true });
-        const tvWritable = await tvFile.createWritable();
-        await tvWritable.write(JSON.stringify(tvItems, null, 2));
-        await tvWritable.close();
-
-        const musicDir = await localDirectoryHandle.getDirectoryHandle('Music', { create: true });
-        const musicFile = await musicDir.getFileHandle('music_backup.json', { create: true });
-        const musicWritable = await musicFile.createWritable();
-        await musicWritable.write(JSON.stringify(musicItems, null, 2));
-        await musicWritable.close();
-    } catch (err) {
-        console.error("Autosave storage access dropped during permission reset cycle.", err);
-    } finally {
-        mediaVaultSaveInProgress = false;
-        if (mediaVaultSaveQueued) {
-            mediaVaultSaveQueued = false;
-            autoSaveToMacDirectory();
+                const musicDir = await localDirectoryHandle.getDirectoryHandle('Music', { create: true });
+                const musicFile = await musicDir.getFileHandle('music_backup.json', { create: true });
+                const musicWritable = await musicFile.createWritable();
+                await musicWritable.write(JSON.stringify(musicItems, null, 2));
+                await musicWritable.close();
+            } catch (err) {
+                console.error("Autosave storage access dropped during permission reset cycle.", err);
+            }
         }
-    }
-}
+
         function showUndoToastNotification(item) {
             if (undoTimeoutTimer) clearTimeout(undoTimeoutTimer);
             const toast = document.getElementById('undoToast');
@@ -1687,58 +1673,40 @@ async function autoSaveToMacDirectory() {
 
         document.getElementById('importFile').addEventListener('change', importFromFile);
         function importFromFile(event) {
-    const file = event.target.files[0]; if (!file) return;
-    const shadowReader = new FileReader();
-    shadowReader.onload = function(e) {
-        try {
-            const importedData = JSON.parse(e.target.result);
-            if (!Array.isArray(importedData)) { alert("Import failed: file must contain a list of items."); return; }
+            const file = event.target.files[0]; if (!file) return;
+            const shadowReader = new FileReader();
+            shadowReader.onload = function(e) {
+                try {
+                    const importedData = JSON.parse(e.target.result);
+                    if (!Array.isArray(importedData)) { alert("Import failed: file must contain a list of items."); return; }
 
-            const validItems = [];
-            let skipped = 0;
-            importedData.forEach(item => {
-                if (item && typeof item === 'object' && typeof item.title === 'string' && item.title.trim() &&
-                    (item.type === 'movie' || item.type === 'tv' || item.type === 'music')) {
-                    if (!item.id) item.id = generateLocalId('imp');
-                    if (!item.creator) item.creator = 'Unknown';
-                    if (!item.year) item.year = 'N/A';
-                    if (!isSafeImageUrl(item.image)) item.image = defaultImageForType(item.type);
-                    validItems.push(item);
-                } else {
-                    skipped++;
-                }
-            });
+                    const validItems = [];
+                    let skipped = 0;
+                    importedData.forEach(item => {
+                        if (item && typeof item === 'object' && typeof item.title === 'string' && item.title.trim() &&
+                            (item.type === 'movie' || item.type === 'tv' || item.type === 'music')) {
+                            if (!item.id) item.id = generateLocalId('imp');
+                            if (!item.creator) item.creator = 'Unknown';
+                            if (!item.year) item.year = 'N/A';
+                            if (!isSafeImageUrl(item.image)) item.image = defaultImageForType(item.type);
+                            validItems.push(item);
+                        } else {
+                            skipped++;
+                        }
+                    });
 
-            if (validItems.length === 0) { alert("Import failed: no valid items found in that file."); return; }
+                    if (validItems.length === 0) { alert("Import failed: no valid items found in that file."); return; }
 
-            // Merge into the EXISTING collection instead of replacing it —
-            // an item whose id already exists gets updated in place,
-            // everything else gets added as new, so importing a file
-            // never wipes out what's already in the vault.
-            let added = 0, updated = 0;
-            validItems.forEach(importedItem => {
-                const existingIndex = collection.findIndex(existing => existing.id === importedItem.id);
-                if (existingIndex !== -1) {
-                    collection[existingIndex] = importedItem;
-                    updated++;
-                } else {
-                    collection.push(importedItem);
-                    added++;
-                }
-            });
-
-            runDataMigrationChecks();
-            saveAndRender();
-            let message = `Added ${added} new item(s)`;
-            if (updated > 0) message += `, updated ${updated} existing item(s)`;
-            message += skipped > 0
-                ? `. Skipped ${skipped} entry/entries that were missing required fields.`
-                : '.';
-            alert(message);
-        } catch (err) { alert("Import failed: that file isn't valid JSON."); }
-    };
-    shadowReader.readAsText(file);
-}
+                    collection = validItems;
+                    runDataMigrationChecks();
+                    saveAndRender();
+                    alert(skipped > 0
+                        ? `Imported ${validItems.length} item(s). Skipped ${skipped} entry/entries that were missing required fields.`
+                        : `Imported ${validItems.length} item(s)!`);
+                } catch (err) { alert("Import failed: that file isn't valid JSON."); }
+            };
+            shadowReader.readAsText(file);
+        }
 
         // Minimal RFC 4180 CSV parser: handles quoted fields, escaped ("") quotes,
         // and commas/newlines inside quoted fields. Returns an array of row arrays.
