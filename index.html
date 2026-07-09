@@ -13,17 +13,18 @@
     <link rel="apple-touch-icon" href="icon-192.png">
     <link rel="icon" href="icon-192.png">
     <!-- Content-Security-Policy: restricts the page to only the origins it actually
-         needs (Tailwind Play CDN, the pinned html5-qrcode CDN, OMDb/iTunes APIs, and
-         cover-art images from anywhere over https). 'unsafe-inline' is required for
-         script/style because the app is built with inline onclick handlers and the
-         Tailwind Play CDN injects styles at runtime — this CSP still blocks the app
-         from loading executable code or making network requests to any other origin. -->
+         needs (Tailwind Play CDN, the pinned html5-qrcode CDN, OMDb/iTunes APIs, your
+         own Tailscale tailnet for Remote Sync, and cover-art images from anywhere over
+         https). 'unsafe-inline' is required for script/style because the app is built
+         with inline onclick handlers and the Tailwind Play CDN injects styles at
+         runtime — this CSP still blocks the app from loading executable code or making
+         network requests to any other origin. -->
     <meta http-equiv="Content-Security-Policy" content="
         default-src 'self';
         script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com;
         style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;
         img-src 'self' https: data: blob:;
-        connect-src 'self' https://www.omdbapi.com https://itunes.apple.com;
+        connect-src 'self' https://www.omdbapi.com https://itunes.apple.com https://*.tail83b8fe.ts.net;
         object-src 'none';
         base-uri 'self';
         form-action 'self';
