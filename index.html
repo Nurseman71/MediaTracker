@@ -1587,6 +1587,20 @@ async function autoSaveToMacDirectory() {
 
         // --- SAVE AND PORT DATA PIPELINES ---
         function saveAndRender() {
+            // An item that's actually in the collection can't also be
+            // validly tombstoned — if a stale "this was deleted" marker
+            // lingers after the same id gets re-added (via search, manual
+            // entry, import, undo, anything), that marker is now wrong and
+            // needs clearing, or it'll wrongly tell the next sync to
+            // delete the very item that was just re-added.
+            if (deletedTombstones.length > 0) {
+                const liveIds = new Set(collection.map(item => item.id));
+                const beforeCount = deletedTombstones.length;
+                deletedTombstones = deletedTombstones.filter(t => !liveIds.has(t.id));
+                if (deletedTombstones.length !== beforeCount) {
+                    safeSetLocalStorage('deletedTombstones', JSON.stringify(deletedTombstones));
+                }
+            }
             safeSetLocalStorage('myMediaCollection', JSON.stringify(collection));
             safeSetLocalStorage('collectionLastModified', String(Date.now()));
             renderCollection();
