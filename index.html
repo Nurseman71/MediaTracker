@@ -355,6 +355,10 @@
             <div class="p-5">
                 <h3 class="text-base font-black text-white mb-3">Select correct database match:</h3>
                 <div id="searchResultsList" class="flex flex-col gap-2"></div>
+                <div id="browseArtistPrompt" class="hidden mt-3 pt-3 border-t border-slate-800 text-center">
+                    <p class="text-slate-400 text-[11px] mb-2">Not seeing the right one? Text search can miss real albums.</p>
+                    <button onclick="browseArtistCatalog()" class="text-xs font-bold text-indigo-400 hover:text-indigo-300 underline">Browse this artist's full catalog instead</button>
+                </div>
             </div>
         </div>
     </div>
@@ -1035,6 +1039,56 @@
         }
 
         // --- GLOBAL SEARCH ENGINE ---
+        // Tracks what was last searched for music, so "browse this
+        // artist's catalog" can reuse it without a separate input.
+        let lastMusicSearchQuery = '';
+
+        // Free-text album search occasionally just doesn't surface a real,
+        // mainstream album no matter how the query is phrased — confirmed
+        // directly, twice, with completely different albums. Browsing an
+        // artist's full catalog via iTunes' lookup endpoint sidesteps this
+        // entirely, since it doesn't depend on search relevance ranking at
+        // all — it just returns everything that artist has released.
+        async function browseArtistCatalog() {
+            const listContainer = document.getElementById('searchResultsList');
+            if (!lastMusicSearchQuery) return;
+
+            listContainer.innerHTML = '<p class="text-slate-400 text-xs text-center py-4">Finding artist...</p>';
+            document.getElementById('browseArtistPrompt').classList.add('hidden');
+
+            try {
+                const artistRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(lastMusicSearchQuery)}&entity=musicArtist&limit=1`);
+                const artistData = await artistRes.json();
+                const artistId = artistData.results && artistData.results[0] && artistData.results[0].artistId;
+                if (!artistId) throw new Error('Could not find a matching artist.');
+                const artistName = artistData.results[0].artistName;
+
+                listContainer.innerHTML = `<p class="text-slate-400 text-xs text-center py-4">Loading ${escapeHtml(artistName)}'s albums...</p>`;
+                const albumsRes = await fetch(`https://itunes.apple.com/lookup?id=${artistId}&entity=album&limit=200`);
+                const albumsData = await albumsRes.json();
+                const albums = (albumsData.results || []).filter(r => r.wrapperType === 'collection');
+                if (albums.length === 0) throw new Error(`No albums found for ${artistName}.`);
+
+                listContainer.innerHTML = '';
+                albums.forEach(album => {
+                    const year = album.releaseDate ? new Date(album.releaseDate).getFullYear() : '';
+                    const albumDataStr = encodeURIComponent(JSON.stringify(album));
+                    const trackInfo = album.trackCount ? `${album.trackCount} track${album.trackCount === 1 ? '' : 's'}` : '';
+                    listContainer.innerHTML += `
+                        <div onclick="processSpecificMusic('${albumDataStr}')" class="flex gap-3 p-2 bg-slate-950 border border-slate-800 rounded-xl items-center cursor-pointer">
+                            <img src="${escapeHtml(album.artworkUrl100)}" class="w-12 h-12 object-cover rounded-md flex-shrink-0">
+                            <div class="truncate">
+                                <p class="font-bold text-slate-200 text-xs truncate">${escapeHtml(album.collectionName)}</p>
+                                <p class="text-[10px] text-indigo-400 truncate">${escapeHtml(artistName)}${year ? ' (' + escapeHtml(year) + ')' : ''}${trackInfo ? ' · ' + escapeHtml(trackInfo) : ''}</p>
+                            </div>
+                        </div>
+                    `;
+                });
+            } catch (error) {
+                listContainer.innerHTML = `<p class="text-rose-400 text-sm text-center py-4 font-semibold">${escapeHtml(error.message)}</p>`;
+            }
+        }
+
         async function fetchSearchList() {
             const type = document.getElementById('mediaType').value;
             const query = document.getElementById('searchQuery').value.trim();
@@ -1044,6 +1098,7 @@
 
             if (!query) return alert('Enter search term!');
             listContainer.innerHTML = '<p class="text-slate-400 text-xs text-center py-4">Searching online database...</p>';
+            document.getElementById('browseArtistPrompt').classList.add('hidden');
             toggleModal('searchResultsModal', true);
             submitBtn.disabled = true;
             submitBtn.innerText = 'Searching...';
@@ -1074,7 +1129,8 @@
                     });
 
                 } else if (type === 'music') {
-                    const response = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=album&limit=5`);
+                    lastMusicSearchQuery = query;
+                    const response = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=album&limit=15`);
                     const data = await response.json();
                     if (!data.results || data.results.length === 0) throw new Error('No matches found.');
                     
@@ -1082,20 +1138,25 @@
                     data.results.forEach(album => {
                         const year = new Date(album.releaseDate).getFullYear();
                         const albumDataStr = encodeURIComponent(JSON.stringify(album));
+                        const trackInfo = album.trackCount ? `${album.trackCount} track${album.trackCount === 1 ? '' : 's'}` : '';
                         listContainer.innerHTML += `
                             <div onclick="processSpecificMusic('${albumDataStr}')" class="flex gap-3 p-2 bg-slate-950 border border-slate-800 rounded-xl items-center cursor-pointer">
                                 <img src="${escapeHtml(album.artworkUrl100)}" class="w-12 h-12 object-cover rounded-md flex-shrink-0">
                                 <div class="truncate">
                                     <p class="font-bold text-slate-200 text-xs truncate">${escapeHtml(album.collectionName)}</p>
-                                    <p class="text-[10px] text-indigo-400 truncate">${escapeHtml(album.artistName)} (${escapeHtml(year)})</p>
+                                    <p class="text-[10px] text-indigo-400 truncate">${escapeHtml(album.artistName)} (${escapeHtml(year)})${trackInfo ? ' · ' + escapeHtml(trackInfo) : ''}</p>
                                 </div>
                             </div>
                         `;
                     });
+                    document.getElementById('browseArtistPrompt').classList.remove('hidden');
                 }
                 document.getElementById('searchQuery').value = ''; 
             } catch (error) {
                 listContainer.innerHTML = `<p class="text-rose-400 text-sm text-center py-4 font-semibold">${escapeHtml(error.message)}</p>`;
+                if (type === 'music') {
+                    document.getElementById('browseArtistPrompt').classList.remove('hidden');
+                }
             } finally {
                 submitBtn.disabled = false;
                 submitBtn.innerText = 'Search';
@@ -1421,6 +1482,27 @@
                 } catch (e) {}
             }
 
+            // Also read sync_meta.json — this is what Remote Sync relies on
+            // for tombstones (deliberately deleted items) and the
+            // last-modified timestamp. Without loading it here too, a fresh
+            // page load (or a different browser/Mac) would only have
+            // whatever's in this browser's own localStorage, which could be
+            // stale, empty, or from an entirely different session — the
+            // folder itself is the more authoritative source once it's
+            // connected.
+            try {
+                const metaFileHandle = await localDirectoryHandle.getFileHandle('sync_meta.json', { create: false });
+                const metaFile = await metaFileHandle.getFile();
+                const metaText = await metaFile.text();
+                if (metaText) {
+                    const meta = JSON.parse(metaText);
+                    if (meta && Array.isArray(meta.tombstones)) {
+                        deletedTombstones = meta.tombstones;
+                        safeSetLocalStorage('deletedTombstones', JSON.stringify(deletedTombstones));
+                    }
+                }
+            } catch (e) {}
+
             if (loadedCollection.length > 0) {
                 collection = loadedCollection;
                 runDataMigrationChecks();
@@ -1463,6 +1545,23 @@ async function autoSaveToMacDirectory() {
         const musicWritable = await musicFile.createWritable();
         await musicWritable.write(JSON.stringify(musicItems, null, 2));
         await musicWritable.close();
+
+        // Also keep sync_meta.json current — Remote Sync (used from an
+        // iPhone, say) relies on this file's lastModified and tombstones
+        // to decide whose edits are newer and which deletions to respect.
+        // Without writing it here too, an edit made directly through this
+        // desktop connection (not via the Remote Sync button) would leave
+        // the server-facing metadata stale — most importantly, re-adding
+        // something previously deleted wouldn't clear its tombstone here,
+        // so a later Remote Sync from another device could resurrect the
+        // deletion even though this device has already moved past it.
+        const metaFile = await localDirectoryHandle.getFileHandle('sync_meta.json', { create: true });
+        const metaWritable = await metaFile.createWritable();
+        await metaWritable.write(JSON.stringify({
+            lastModified: Date.now(),
+            tombstones: deletedTombstones
+        }));
+        await metaWritable.close();
     } catch (err) {
         console.error("Autosave storage access dropped during permission reset cycle.", err);
     } finally {
