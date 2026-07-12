@@ -1013,7 +1013,7 @@
             
             if (searchType === 'music') {
                 try {
-                    const response = await fetch(`https://itunes.apple.com/lookup?upc=${upcCode}`);
+                    const response = await fetchWithRetry(`https://itunes.apple.com/lookup?upc=${upcCode}`);
                     const data = await response.json();
                     if (data.results && data.results.length > 0) {
                         processSpecificMusic(encodeURIComponent(JSON.stringify(data.results[0])));
@@ -1070,6 +1070,25 @@
         // with at all, consistent with iOS Safari's standalone PWA mode not
         // supporting native prompt() dialogs). An input already sitting on
         // the page has no such platform dependency.
+        // iTunes' public search/lookup API is intermittently inconsistent
+        // about sending proper CORS headers back — confirmed directly via
+        // the browser Console: the exact same request failed twice with
+        // "No 'Access-Control-Allow-Origin' header is present," then
+        // succeeded moments later with no code change at all. Retrying
+        // automatically before surfacing an error avoids showing "Failed
+        // to fetch" for what's usually just a brief hiccup on iTunes' end.
+        async function fetchWithRetry(url, retries = 2, delayMs = 600) {
+            for (let attempt = 0; attempt <= retries; attempt++) {
+                try {
+                    const res = await fetch(url);
+                    return res;
+                } catch (err) {
+                    if (attempt === retries) throw err;
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                }
+            }
+        }
+
         async function browseArtistCatalog() {
             const listContainer = document.getElementById('searchResultsList');
             const artistName = document.getElementById('browseArtistInput').value.trim();
@@ -1079,14 +1098,14 @@
             document.getElementById('browseArtistPrompt').classList.add('hidden');
 
             try {
-                const artistRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=musicArtist&limit=1`);
+                const artistRes = await fetchWithRetry(`https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=musicArtist&limit=1`);
                 const artistData = await artistRes.json();
                 const artistId = artistData.results && artistData.results[0] && artistData.results[0].artistId;
                 if (!artistId) throw new Error('Could not find a matching artist.');
                 const resolvedArtistName = artistData.results[0].artistName;
 
                 listContainer.innerHTML = `<p class="text-slate-400 text-xs text-center py-4">Loading ${escapeHtml(resolvedArtistName)}'s albums...</p>`;
-                const albumsRes = await fetch(`https://itunes.apple.com/lookup?id=${artistId}&entity=album&limit=200`);
+                const albumsRes = await fetchWithRetry(`https://itunes.apple.com/lookup?id=${artistId}&entity=album&limit=200`);
                 const albumsData = await albumsRes.json();
                 const albums = (albumsData.results || []).filter(r => r.wrapperType === 'collection');
                 if (albums.length === 0) throw new Error(`No albums found for ${resolvedArtistName}.`);
@@ -1152,7 +1171,7 @@
 
                 } else if (type === 'music') {
                     lastMusicSearchQuery = query;
-                    const response = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=album&limit=15`);
+                    const response = await fetchWithRetry(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=album&limit=15`);
                     const data = await response.json();
                     if (!data.results || data.results.length === 0) throw new Error('No matches found.');
                     
@@ -1217,7 +1236,7 @@
                 const album = JSON.parse(decodeURIComponent(encodedAlbumStr));
                 let tracklistDetails = `Genre: ${album.primaryGenreName}\n\nTracks:`;
                 try {
-                    const trackResponse = await fetch(`https://itunes.apple.com/lookup?id=${album.collectionId}&entity=song`);
+                    const trackResponse = await fetchWithRetry(`https://itunes.apple.com/lookup?id=${album.collectionId}&entity=song`);
                     const trackData = await trackResponse.json();
                     if (trackData.results && trackData.results.length > 1) {
                         const tracks = trackData.results.filter(item => item.wrapperType === 'track').sort((a, b) => a.trackNumber - b.trackNumber);
@@ -2246,12 +2265,12 @@ async function autoSaveToMacDirectory() {
 
                 try {
                     const cleanTerm = encodeURIComponent(`${item.title} ${item.creator}`);
-                    const searchRes = await fetch(`https://itunes.apple.com/search?term=${cleanTerm}&entity=album&limit=1`);
+                    const searchRes = await fetchWithRetry(`https://itunes.apple.com/search?term=${cleanTerm}&entity=album&limit=1`);
                     const searchData = await searchRes.json();
                     
                     if (searchData.results && searchData.results.length > 0) {
                         const album = searchData.results[0];
-                        const trackResponse = await fetch(`https://itunes.apple.com/lookup?id=${album.collectionId}&entity=song`);
+                        const trackResponse = await fetchWithRetry(`https://itunes.apple.com/lookup?id=${album.collectionId}&entity=song`);
                         const trackData = await trackResponse.json();
                         
                         if (trackData.results && trackData.results.length > 1) {
