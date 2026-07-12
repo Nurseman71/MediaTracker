@@ -1049,25 +1049,34 @@
         // artist's full catalog via iTunes' lookup endpoint sidesteps this
         // entirely, since it doesn't depend on search relevance ranking at
         // all — it just returns everything that artist has released.
+        //
+        // Needs just the artist's name, not the combined artist+album text
+        // used for the regular search above — asking explicitly rather than
+        // reusing that combined text, which doesn't match any real artist
+        // (confirmed directly: searching "Ed Sheeran No.6 Collaborations
+        // Project" as an artist name found nobody, since that's not an
+        // artist name at all). Pre-filled with the original search so it's
+        // usually just a matter of deleting the album part.
         async function browseArtistCatalog() {
             const listContainer = document.getElementById('searchResultsList');
-            if (!lastMusicSearchQuery) return;
+            const artistName = window.prompt('Artist name to browse:', lastMusicSearchQuery);
+            if (!artistName || !artistName.trim()) return;
 
             listContainer.innerHTML = '<p class="text-slate-400 text-xs text-center py-4">Finding artist...</p>';
             document.getElementById('browseArtistPrompt').classList.add('hidden');
 
             try {
-                const artistRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(lastMusicSearchQuery)}&entity=musicArtist&limit=1`);
+                const artistRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artistName.trim())}&entity=musicArtist&limit=1`);
                 const artistData = await artistRes.json();
                 const artistId = artistData.results && artistData.results[0] && artistData.results[0].artistId;
                 if (!artistId) throw new Error('Could not find a matching artist.');
-                const artistName = artistData.results[0].artistName;
+                const resolvedArtistName = artistData.results[0].artistName;
 
-                listContainer.innerHTML = `<p class="text-slate-400 text-xs text-center py-4">Loading ${escapeHtml(artistName)}'s albums...</p>`;
+                listContainer.innerHTML = `<p class="text-slate-400 text-xs text-center py-4">Loading ${escapeHtml(resolvedArtistName)}'s albums...</p>`;
                 const albumsRes = await fetch(`https://itunes.apple.com/lookup?id=${artistId}&entity=album&limit=200`);
                 const albumsData = await albumsRes.json();
                 const albums = (albumsData.results || []).filter(r => r.wrapperType === 'collection');
-                if (albums.length === 0) throw new Error(`No albums found for ${artistName}.`);
+                if (albums.length === 0) throw new Error(`No albums found for ${resolvedArtistName}.`);
 
                 listContainer.innerHTML = '';
                 albums.forEach(album => {
@@ -1079,7 +1088,7 @@
                             <img src="${escapeHtml(album.artworkUrl100)}" class="w-12 h-12 object-cover rounded-md flex-shrink-0">
                             <div class="truncate">
                                 <p class="font-bold text-slate-200 text-xs truncate">${escapeHtml(album.collectionName)}</p>
-                                <p class="text-[10px] text-indigo-400 truncate">${escapeHtml(artistName)}${year ? ' (' + escapeHtml(year) + ')' : ''}${trackInfo ? ' · ' + escapeHtml(trackInfo) : ''}</p>
+                                <p class="text-[10px] text-indigo-400 truncate">${escapeHtml(resolvedArtistName)}${year ? ' (' + escapeHtml(year) + ')' : ''}${trackInfo ? ' · ' + escapeHtml(trackInfo) : ''}</p>
                             </div>
                         </div>
                     `;
