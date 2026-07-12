@@ -355,9 +355,12 @@
             <div class="p-5">
                 <h3 class="text-base font-black text-white mb-3">Select correct database match:</h3>
                 <div id="searchResultsList" class="flex flex-col gap-2"></div>
-                <div id="browseArtistPrompt" class="hidden mt-3 pt-3 border-t border-slate-800 text-center">
-                    <p class="text-slate-400 text-[11px] mb-2">Not seeing the right one? Text search can miss real albums.</p>
-                    <button onclick="browseArtistCatalog()" class="text-xs font-bold text-indigo-400 hover:text-indigo-300 underline">Browse this artist's full catalog instead</button>
+                <div id="browseArtistPrompt" class="hidden mt-3 pt-3 border-t border-slate-800">
+                    <p class="text-slate-400 text-[11px] mb-2 text-center">Not seeing the right one? Text search can miss real albums — browse everything an artist has released instead:</p>
+                    <div class="flex gap-2">
+                        <input type="text" id="browseArtistInput" placeholder="Artist name" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500" onkeydown="if(event.key==='Enter'){event.preventDefault();browseArtistCatalog();}">
+                        <button onclick="browseArtistCatalog()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-2 rounded-lg whitespace-nowrap">Browse</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1043,6 +1046,16 @@
         // artist's catalog" can reuse it without a separate input.
         let lastMusicSearchQuery = '';
 
+        function showBrowseArtistPrompt() {
+            const promptDiv = document.getElementById('browseArtistPrompt');
+            const input = document.getElementById('browseArtistInput');
+            promptDiv.classList.remove('hidden');
+            // Pre-filled with the original search as a starting point — the
+            // artist name is usually right there, just needs the album part
+            // trimmed off.
+            input.value = lastMusicSearchQuery;
+        }
+
         // Free-text album search occasionally just doesn't surface a real,
         // mainstream album no matter how the query is phrased — confirmed
         // directly, twice, with completely different albums. Browsing an
@@ -1050,23 +1063,23 @@
         // entirely, since it doesn't depend on search relevance ranking at
         // all — it just returns everything that artist has released.
         //
-        // Needs just the artist's name, not the combined artist+album text
-        // used for the regular search above — asking explicitly rather than
-        // reusing that combined text, which doesn't match any real artist
-        // (confirmed directly: searching "Ed Sheeran No.6 Collaborations
-        // Project" as an artist name found nobody, since that's not an
-        // artist name at all). Pre-filled with the original search so it's
-        // usually just a matter of deleting the album part.
+        // Uses a real on-page input rather than window.prompt() — confirmed
+        // directly that prompt() doesn't reliably work when Media Vault is
+        // installed as a home-screen app on iOS (tapping the browse link
+        // went straight to an error with no visible dialog to interact
+        // with at all, consistent with iOS Safari's standalone PWA mode not
+        // supporting native prompt() dialogs). An input already sitting on
+        // the page has no such platform dependency.
         async function browseArtistCatalog() {
             const listContainer = document.getElementById('searchResultsList');
-            const artistName = window.prompt('Artist name to browse:', lastMusicSearchQuery);
-            if (!artistName || !artistName.trim()) return;
+            const artistName = document.getElementById('browseArtistInput').value.trim();
+            if (!artistName) return;
 
             listContainer.innerHTML = '<p class="text-slate-400 text-xs text-center py-4">Finding artist...</p>';
             document.getElementById('browseArtistPrompt').classList.add('hidden');
 
             try {
-                const artistRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artistName.trim())}&entity=musicArtist&limit=1`);
+                const artistRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=musicArtist&limit=1`);
                 const artistData = await artistRes.json();
                 const artistId = artistData.results && artistData.results[0] && artistData.results[0].artistId;
                 if (!artistId) throw new Error('Could not find a matching artist.');
@@ -1158,13 +1171,13 @@
                             </div>
                         `;
                     });
-                    document.getElementById('browseArtistPrompt').classList.remove('hidden');
+                    showBrowseArtistPrompt();
                 }
                 document.getElementById('searchQuery').value = ''; 
             } catch (error) {
                 listContainer.innerHTML = `<p class="text-rose-400 text-sm text-center py-4 font-semibold">${escapeHtml(error.message)}</p>`;
                 if (type === 'music') {
-                    document.getElementById('browseArtistPrompt').classList.remove('hidden');
+                    showBrowseArtistPrompt();
                 }
             } finally {
                 submitBtn.disabled = false;
