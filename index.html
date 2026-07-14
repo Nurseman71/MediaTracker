@@ -1046,6 +1046,20 @@
         // artist's catalog" can reuse it without a separate input.
         let lastMusicSearchQuery = '';
 
+        // Holds the currently-displayed music search/browse results, so
+        // clicking one can reference it by a simple numeric index rather
+        // than embedding its full serialized data in an HTML onclick
+        // attribute — confirmed directly that the previous approach broke
+        // for any album whose title contains an apostrophe (a real,
+        // pre-existing bug: encodeURIComponent deliberately does not
+        // escape apostrophes or parentheses, so a title like "Now That's
+        // What I Call Music, Vol. 46" left a raw, unescaped quote that
+        // prematurely closed the onclick attribute's own string literal,
+        // breaking the click handler with a syntax error). An index is
+        // just a plain integer — nothing about the album's actual data
+        // ever needs escaping at all.
+        let currentMusicResults = [];
+
         function showBrowseArtistPrompt() {
             const promptDiv = document.getElementById('browseArtistPrompt');
             const input = document.getElementById('browseArtistInput');
@@ -1111,12 +1125,12 @@
                 if (albums.length === 0) throw new Error(`No albums found for ${resolvedArtistName}.`);
 
                 listContainer.innerHTML = '';
-                albums.forEach(album => {
+                currentMusicResults = albums;
+                albums.forEach((album, index) => {
                     const year = album.releaseDate ? new Date(album.releaseDate).getFullYear() : '';
-                    const albumDataStr = encodeURIComponent(JSON.stringify(album));
                     const trackInfo = album.trackCount ? `${album.trackCount} track${album.trackCount === 1 ? '' : 's'}` : '';
                     listContainer.innerHTML += `
-                        <div onclick="processSpecificMusic('${albumDataStr}')" class="flex gap-3 p-2 bg-slate-950 border border-slate-800 rounded-xl items-center cursor-pointer">
+                        <div onclick="processSpecificMusic(${index})" class="flex gap-3 p-2 bg-slate-950 border border-slate-800 rounded-xl items-center cursor-pointer">
                             <img src="${escapeHtml(album.artworkUrl100)}" class="w-12 h-12 object-cover rounded-md flex-shrink-0">
                             <div class="truncate">
                                 <p class="font-bold text-slate-200 text-xs truncate">${escapeHtml(album.collectionName)}</p>
@@ -1176,12 +1190,12 @@
                     if (!data.results || data.results.length === 0) throw new Error('No matches found.');
                     
                     listContainer.innerHTML = '';
-                    data.results.forEach(album => {
+                    currentMusicResults = data.results;
+                    data.results.forEach((album, index) => {
                         const year = new Date(album.releaseDate).getFullYear();
-                        const albumDataStr = encodeURIComponent(JSON.stringify(album));
                         const trackInfo = album.trackCount ? `${album.trackCount} track${album.trackCount === 1 ? '' : 's'}` : '';
                         listContainer.innerHTML += `
-                            <div onclick="processSpecificMusic('${albumDataStr}')" class="flex gap-3 p-2 bg-slate-950 border border-slate-800 rounded-xl items-center cursor-pointer">
+                            <div onclick="processSpecificMusic(${index})" class="flex gap-3 p-2 bg-slate-950 border border-slate-800 rounded-xl items-center cursor-pointer">
                                 <img src="${escapeHtml(album.artworkUrl100)}" class="w-12 h-12 object-cover rounded-md flex-shrink-0">
                                 <div class="truncate">
                                     <p class="font-bold text-slate-200 text-xs truncate">${escapeHtml(album.collectionName)}</p>
@@ -1230,10 +1244,11 @@
             } catch(e) { alert("Error loading details."); }
         }
 
-        async function processSpecificMusic(encodedAlbumStr) {
+        async function processSpecificMusic(index) {
             toggleModal('searchResultsModal', false);
             try {
-                const album = JSON.parse(decodeURIComponent(encodedAlbumStr));
+                const album = currentMusicResults[index];
+                if (!album) throw new Error('Album not found');
                 let tracklistDetails = `Genre: ${album.primaryGenreName}\n\nTracks:`;
                 try {
                     const trackResponse = await fetchWithRetry(`https://itunes.apple.com/lookup?id=${album.collectionId}&entity=song`);
