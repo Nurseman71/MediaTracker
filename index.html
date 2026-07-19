@@ -1550,7 +1550,8 @@
             // folder itself is the more authoritative source once it's
             // connected.
             try {
-                const metaFileHandle = await localDirectoryHandle.getFileHandle('sync_meta.json', { create: false });
+                const systemDir = await localDirectoryHandle.getDirectoryHandle('System', { create: false });
+                const metaFileHandle = await systemDir.getFileHandle('sync_meta.json', { create: false });
                 const metaFile = await metaFileHandle.getFile();
                 const metaText = await metaFile.text();
                 if (metaText) {
@@ -1617,7 +1618,8 @@ async function autoSaveToMacDirectory() {
         // something previously deleted wouldn't clear its tombstone here,
         // so a later Remote Sync from another device could resurrect the
         // deletion even though this device has already moved past it.
-        const metaFile = await localDirectoryHandle.getFileHandle('sync_meta.json', { create: true });
+        const systemDir = await localDirectoryHandle.getDirectoryHandle('System', { create: true });
+        const metaFile = await systemDir.getFileHandle('sync_meta.json', { create: true });
         const metaWritable = await metaFile.createWritable();
         await metaWritable.write(JSON.stringify({
             lastModified: Date.now(),
