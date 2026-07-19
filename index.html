@@ -1495,7 +1495,8 @@
             
             try {
                 const movieDir = await localDirectoryHandle.getDirectoryHandle('Movies', { create: false });
-                const fileHandle = await movieDir.getFileHandle('movies_backup.json', { create: false });
+                const movieDataDir = await movieDir.getDirectoryHandle('Data', { create: false });
+                const fileHandle = await movieDataDir.getFileHandle('movies_backup.json', { create: false });
                 const file = await fileHandle.getFile();
                 const text = await file.text();
                 if (text) {
@@ -1506,7 +1507,8 @@
 
             try {
                 const musicDir = await localDirectoryHandle.getDirectoryHandle('Music', { create: false });
-                const fileHandle = await musicDir.getFileHandle('music_backup.json', { create: false });
+                const musicDataDir = await musicDir.getDirectoryHandle('Data', { create: false });
+                const fileHandle = await musicDataDir.getFileHandle('music_backup.json', { create: false });
                 const file = await fileHandle.getFile();
                 const text = await file.text();
                 if (text) {
@@ -1517,7 +1519,8 @@
 
             try {
                 const tvDir = await localDirectoryHandle.getDirectoryHandle('TV Shows', { create: false });
-                const fileHandle = await tvDir.getFileHandle('tv_backup.json', { create: false });
+                const tvDataDir = await tvDir.getDirectoryHandle('Data', { create: false });
+                const fileHandle = await tvDataDir.getFileHandle('tv_backup.json', { create: false });
                 const file = await fileHandle.getFile();
                 const text = await file.text();
                 if (text) {
@@ -1585,19 +1588,22 @@ async function autoSaveToMacDirectory() {
 
     try {
         const movieDir = await localDirectoryHandle.getDirectoryHandle('Movies', { create: true });
-        const movieFile = await movieDir.getFileHandle('movies_backup.json', { create: true });
+        const movieDataDir = await movieDir.getDirectoryHandle('Data', { create: true });
+        const movieFile = await movieDataDir.getFileHandle('movies_backup.json', { create: true });
         const movieWritable = await movieFile.createWritable();
         await movieWritable.write(JSON.stringify(movieItems, null, 2));
         await movieWritable.close();
 
         const tvDir = await localDirectoryHandle.getDirectoryHandle('TV Shows', { create: true });
-        const tvFile = await tvDir.getFileHandle('tv_backup.json', { create: true });
+        const tvDataDir = await tvDir.getDirectoryHandle('Data', { create: true });
+        const tvFile = await tvDataDir.getFileHandle('tv_backup.json', { create: true });
         const tvWritable = await tvFile.createWritable();
         await tvWritable.write(JSON.stringify(tvItems, null, 2));
         await tvWritable.close();
 
         const musicDir = await localDirectoryHandle.getDirectoryHandle('Music', { create: true });
-        const musicFile = await musicDir.getFileHandle('music_backup.json', { create: true });
+        const musicDataDir = await musicDir.getDirectoryHandle('Data', { create: true });
+        const musicFile = await musicDataDir.getFileHandle('music_backup.json', { create: true });
         const musicWritable = await musicFile.createWritable();
         await musicWritable.write(JSON.stringify(musicItems, null, 2));
         await musicWritable.close();
