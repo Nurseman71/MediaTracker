@@ -562,6 +562,10 @@
                         <label class="text-xs text-slate-400 font-bold uppercase tracking-wider">Sync Token</label>
                         <input id="remoteSyncToken" type="text" placeholder="Paste your token" class="mt-1 w-full bg-slate-800 border border-slate-700 text-sm rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500">
                     </div>
+                    <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                        <input type="checkbox" id="remoteSyncAutoToggle" class="w-3.5 h-3.5 accent-indigo-500">
+                        Auto-sync every 30s while this tab is open, and right after each change
+                    </label>
                     <button onclick="remoteSyncNow()" id="remoteSyncBtn" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
                         🔄 Sync Now
                     </button>
@@ -720,6 +724,7 @@
         let undoTimeoutTimer = null;
         let localDirectoryHandle = null;
         let isAwaitingReauthorization = false;
+        let remoteSyncInFlight = false;
 
         // Escapes untrusted text before it's inserted via innerHTML (titles/artists/etc.
         // come from external APIs and manual entry, so treat them as untrusted).
@@ -828,9 +833,52 @@
         document.getElementById('omdbKey').addEventListener('input', (e) => safeSetLocalStorage('omdbApiKey', e.target.value.trim()));
 
         document.getElementById('remoteSyncUrl').value = localStorage.getItem('remoteSyncUrl') || '';
-        document.getElementById('remoteSyncUrl').addEventListener('input', (e) => safeSetLocalStorage('remoteSyncUrl', e.target.value.trim()));
+        document.getElementById('remoteSyncUrl').addEventListener('input', (e) => {
+            safeSetLocalStorage('remoteSyncUrl', e.target.value.trim());
+            setupRemoteAutoSync();
+        });
         document.getElementById('remoteSyncToken').value = localStorage.getItem('remoteSyncToken') || '';
-        document.getElementById('remoteSyncToken').addEventListener('input', (e) => safeSetLocalStorage('remoteSyncToken', e.target.value.trim()));
+        document.getElementById('remoteSyncToken').addEventListener('input', (e) => {
+            safeSetLocalStorage('remoteSyncToken', e.target.value.trim());
+            setupRemoteAutoSync();
+        });
+        document.getElementById('remoteSyncAutoToggle').checked = localStorage.getItem('remoteSyncAutoEnabled') === '1';
+        document.getElementById('remoteSyncAutoToggle').addEventListener('change', (e) => {
+            safeSetLocalStorage('remoteSyncAutoEnabled', e.target.checked ? '1' : '0');
+            setupRemoteAutoSync();
+        });
+
+        // ---------- Remote Sync automation ----------
+        // Two mechanisms, matching the pattern used in Stockroom: a
+        // periodic pull/push while the tab is open (so edits made on the
+        // *other* device show up here without a manual tap), and a
+        // fire-and-forget sync right after any local change via
+        // saveAndRender() (see below) — so this device's own edits go out
+        // promptly instead of waiting for the timer. remoteSyncInFlight
+        // (declared inside remoteSyncNow's scope below) prevents the two
+        // from ever overlapping.
+        let remoteAutoSyncTimer = null;
+        function setupRemoteAutoSync() {
+            if (remoteAutoSyncTimer) {
+                clearInterval(remoteAutoSyncTimer);
+                remoteAutoSyncTimer = null;
+            }
+            const enabled = localStorage.getItem('remoteSyncAutoEnabled') === '1';
+            const url = (localStorage.getItem('remoteSyncUrl') || '').trim();
+            const token = (localStorage.getItem('remoteSyncToken') || '').trim();
+            if (enabled && url && token) {
+                remoteAutoSyncTimer = setInterval(() => remoteSyncNow(), 30000);
+            }
+        }
+        function autoRemoteSyncSoon() {
+            const enabled = localStorage.getItem('remoteSyncAutoEnabled') === '1';
+            const url = (localStorage.getItem('remoteSyncUrl') || '').trim();
+            const token = (localStorage.getItem('remoteSyncToken') || '').trim();
+            if (enabled && url && token) {
+                remoteSyncNow(); // fire-and-forget; remoteSyncInFlight guards overlap
+            }
+        }
+        setupRemoteAutoSync();
 
         // Syncs with the small server running on the Mac (see media_vault_server.py),
         // reached over Tailscale. Works as: fetch the server's current data, merge it
@@ -840,6 +888,7 @@
         // (the same item edited differently on two devices between syncs) — fine for
         // a single person using two devices, not a general multi-user sync system.
         async function remoteSyncNow() {
+            if (remoteSyncInFlight) return;
             const url = document.getElementById('remoteSyncUrl').value.trim().replace(/\/$/, '');
             const token = document.getElementById('remoteSyncToken').value.trim();
             const statusEl = document.getElementById('remoteSyncStatus');
@@ -850,6 +899,7 @@
                 return;
             }
 
+            remoteSyncInFlight = true;
             btn.disabled = true;
             btn.textContent = '🔄 Syncing...';
             statusEl.textContent = '';
@@ -972,6 +1022,7 @@
             } finally {
                 btn.disabled = false;
                 btn.textContent = '🔄 Sync Now';
+                remoteSyncInFlight = false;
             }
         }
 
@@ -1768,6 +1819,7 @@ async function autoSaveToMacDirectory() {
             safeSetLocalStorage('collectionLastModified', String(Date.now()));
             renderCollection();
             autoSaveToMacDirectory();
+            autoRemoteSyncSoon();
         }
 
         // --- GRAPHICS AND RENDER CORNERSTONES ---
