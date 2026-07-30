@@ -143,6 +143,7 @@
                     MEDIA VAULT
                 </h1>
                 <p class="text-sm text-slate-400 font-medium mt-0.5">Christopher's Personal Collection</p>
+                <p id="remoteSyncHeaderStatus" class="text-[11px] text-slate-500 font-mono mt-1"></p>
             </div>
             <!-- File Backup & Directory Sync Controls -->
             <div class="flex flex-row flex-wrap gap-2.5 justify-center items-center w-full md:w-auto relative">
@@ -866,8 +867,12 @@
             const enabled = localStorage.getItem('remoteSyncAutoEnabled') === '1';
             const url = (localStorage.getItem('remoteSyncUrl') || '').trim();
             const token = (localStorage.getItem('remoteSyncToken') || '').trim();
+            const headerStatusEl = document.getElementById('remoteSyncHeaderStatus');
             if (enabled && url && token) {
                 remoteAutoSyncTimer = setInterval(() => remoteSyncNow(), 30000);
+                if (headerStatusEl && !headerStatusEl.textContent) headerStatusEl.textContent = 'auto-sync armed';
+            } else if (headerStatusEl) {
+                headerStatusEl.textContent = '';
             }
         }
         function autoRemoteSyncSoon() {
@@ -887,6 +892,17 @@
         // sides end up with the union. Note this is last-write-wins on real conflicts
         // (the same item edited differently on two devices between syncs) — fine for
         // a single person using two devices, not a general multi-user sync system.
+        // Updates both the status line inside the Remote Sync modal AND the
+        // always-visible one under the header title — so you can see the
+        // current sync state at a glance without opening the modal at all,
+        // which is the whole point of auto-sync running unattended.
+        function setRemoteSyncStatus(text){
+            const modalStatusEl = document.getElementById('remoteSyncStatus');
+            const headerStatusEl = document.getElementById('remoteSyncHeaderStatus');
+            if (modalStatusEl) modalStatusEl.textContent = text;
+            if (headerStatusEl) headerStatusEl.textContent = text;
+        }
+
         async function remoteSyncNow() {
             if (remoteSyncInFlight) return;
             const url = document.getElementById('remoteSyncUrl').value.trim().replace(/\/$/, '');
@@ -902,7 +918,7 @@
             remoteSyncInFlight = true;
             btn.disabled = true;
             btn.textContent = '🔄 Syncing...';
-            statusEl.textContent = '';
+            setRemoteSyncStatus('Syncing…');
 
             try {
                 // Read this device's own last-modified timestamp BEFORE anything
@@ -1016,9 +1032,9 @@
                 }
 
                 const now = new Date().toLocaleTimeString();
-                statusEl.textContent = `Synced successfully at ${now}.`;
+                setRemoteSyncStatus(`Synced successfully at ${now}.`);
             } catch (err) {
-                statusEl.textContent = `Sync failed: ${err.message}`;
+                setRemoteSyncStatus(`Sync failed: ${err.message}`);
             } finally {
                 btn.disabled = false;
                 btn.textContent = '🔄 Sync Now';
