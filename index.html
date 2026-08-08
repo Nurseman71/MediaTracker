@@ -18,12 +18,16 @@
          https). 'unsafe-inline' is required for script/style because the app is built
          with inline onclick handlers and the Tailwind Play CDN injects styles at
          runtime — this CSP still blocks the app from loading executable code or making
-         network requests to any other origin. -->
+         network requests to any other origin. media-src allows blob: (not just 'self')
+         so the in-app audio player can play track files read from the connected folder
+         via the File System Access API — those are handed to <audio> as blob: object
+         URLs, which default-src's plain 'self' does not cover on its own. -->
     <meta http-equiv="Content-Security-Policy" content="
         default-src 'self';
         script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com;
         style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;
         img-src 'self' https: data: blob:;
+        media-src 'self' blob:;
         connect-src 'self' https://www.omdbapi.com https://itunes.apple.com https://*.tail83b8fe.ts.net;
         object-src 'none';
         base-uri 'self';
