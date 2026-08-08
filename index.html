@@ -21,13 +21,16 @@
          network requests to any other origin. media-src allows blob: (not just 'self')
          so the in-app audio player can play track files read from the connected folder
          via the File System Access API — those are handed to <audio> as blob: object
-         URLs, which default-src's plain 'self' does not cover on its own. -->
+         URLs, which default-src's plain 'self' does not cover on its own. media-src
+         also allows the same Tailscale tailnet wildcard connect-src already does, so
+         devices without File System Access API support (iPhone Safari) can stream
+         audio from the Remote Sync server's /media/ endpoint instead. -->
     <meta http-equiv="Content-Security-Policy" content="
         default-src 'self';
         script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com;
         style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;
         img-src 'self' https: data: blob:;
-        media-src 'self' blob:;
+        media-src 'self' blob: https://*.tail83b8fe.ts.net;
         connect-src 'self' https://www.omdbapi.com https://itunes.apple.com https://*.tail83b8fe.ts.net;
         object-src 'none';
         base-uri 'self';
@@ -1668,15 +1671,24 @@
             const item = collection.find(i => i.id === itemId);
             if (!item || item.type !== 'music') return;
 
-            if (!localDirectoryHandle) {
-                alert('Connect your Media Vault folder first (the "Folder Connected" button) — playback reads the actual audio files from disk, which only works on the desktop app with the folder connected.');
-                return;
-            }
-
             const playBtn = document.getElementById(`playBtn-${itemId}`);
             const originalBtnText = playBtn ? playBtn.innerText : null;
-            if (playBtn) playBtn.innerText = '⏳ Loading...';
 
+            // Desktop with a connected folder plays local files directly —
+            // unchanged behavior. Everything else (iPhone Safari has no
+            // File System Access API at all, so localDirectoryHandle can
+            // never be set there) falls back to streaming from the Remote
+            // Sync server already used for JSON/cover-art sync, if it's
+            // configured.
+            if (localDirectoryHandle) {
+                await playAlbumFromLocalFolder(item, playBtn, originalBtnText);
+            } else {
+                await playAlbumFromRemoteServer(item, playBtn, originalBtnText);
+            }
+        }
+
+        async function playAlbumFromLocalFolder(item, playBtn, originalBtnText) {
+            if (playBtn) playBtn.innerText = '⏳ Loading...';
             try {
                 const musicDir = await localDirectoryHandle.getDirectoryHandle('Music', { create: false }).catch(() => null);
                 if (!musicDir) {
@@ -1713,6 +1725,55 @@
             }
         }
 
+        function buildRemoteMediaUrl(baseUrl, token, relativePath) {
+            // Encode each path segment individually (not the slashes
+            // between them) so this reads as normal path components on
+            // the wire — same convention the server's own /media/<path>
+            // route expects, and avoids relying on %2F round-tripping
+            // correctly through the Tailscale proxy in front of it.
+            const encodedPath = relativePath.split('/').map(encodeURIComponent).join('/');
+            return `${baseUrl}/media/${encodedPath}?token=${encodeURIComponent(token)}`;
+        }
+
+        async function playAlbumFromRemoteServer(item, playBtn, originalBtnText) {
+            const remoteUrl = (localStorage.getItem('remoteSyncUrl') || '').trim().replace(/\/$/, '');
+            const remoteToken = (localStorage.getItem('remoteSyncToken') || '').trim();
+            if (!remoteUrl || !remoteToken) {
+                alert('To play audio on this device, either connect your Media Vault folder (desktop only, via "Folder Connected") or set up Remote Sync (⋯ More → Remote Sync) so it can stream from your Mac instead.');
+                return;
+            }
+
+            if (playBtn) playBtn.innerText = '⏳ Loading...';
+            try {
+                // Same token-as-query-param convention remoteSyncNow()
+                // already uses — no custom headers, to avoid the CORS
+                // preflight iOS Safari has documented trouble with.
+                const encodedToken = encodeURIComponent(remoteToken);
+                const res = await fetch(`${remoteUrl}/api/tracks?id=${encodeURIComponent(item.id)}&token=${encodedToken}`);
+                if (!res.ok) {
+                    const errBody = await res.json().catch(() => ({}));
+                    throw new Error(errBody.error || `Server returned ${res.status}`);
+                }
+                const data = await res.json();
+                if (!data.tracks || data.tracks.length === 0) {
+                    alert(`No ripped audio files found on the server for "${item.title}".`);
+                    return;
+                }
+
+                musicPlayerTracks = data.tracks.map(t => ({
+                    name: t.name,
+                    url: buildRemoteMediaUrl(remoteUrl, remoteToken, t.path),
+                }));
+                musicPlayerItem = item;
+                await loadAndPlayTrack(0);
+            } catch (e) {
+                console.log('Remote album playback failed to start.', e);
+                alert(`Could not stream "${item.title}" from your Mac: ${e.message || 'unknown error'}. Make sure the Remote Sync server is running and reachable (⋯ More → Remote Sync → Sync Now to test the connection).`);
+            } finally {
+                if (playBtn) playBtn.innerText = originalBtnText;
+            }
+        }
+
         function mimeTypeForAudioFile(name) {
             // FileSystemFileHandle.getFile() often hands back a File with
             // an empty/unreliable `type` for less-common extensions like
@@ -1738,25 +1799,37 @@
             if (index < 0 || index >= musicPlayerTracks.length) return;
             musicPlayerIndex = index;
             const track = musicPlayerTracks[index];
-            const rawFile = await track.handle.getFile();
-            // Always override with the type derived from the extension,
-            // rather than only when rawFile.type is empty: the real error
-            // ("Failed to load because no supported source was found")
-            // showed up even with that empty-only check, meaning Chrome is
-            // handing back some truthy-but-wrong type (e.g. a generic
-            // application/octet-stream) for .flac via this API on macOS —
-            // not no type at all. The extension is authoritative here
-            // anyway, since this app controls how these files are named.
-            // Rewrapping is cheap (Blob composition, not an eager read
-            // into memory), so there's no cost to always doing it.
-            const mimeType = mimeTypeForAudioFile(track.name);
-            const file = mimeType ? new Blob([rawFile], { type: mimeType }) : rawFile;
-
-            if (musicPlayerObjectUrl) URL.revokeObjectURL(musicPlayerObjectUrl);
-            musicPlayerObjectUrl = URL.createObjectURL(file);
-
             const audio = document.getElementById('miniPlayerAudio');
-            audio.src = musicPlayerObjectUrl;
+
+            if (track.url) {
+                // Remote track (streamed from the Mac's Remote Sync
+                // server): a real HTTP(S) URL with a correct Content-Type
+                // and Range support set server-side — no blob/MIME
+                // workaround needed here, since that whole class of
+                // problem was the browser guessing at a local file's type,
+                // which doesn't apply to a normal network response.
+                if (musicPlayerObjectUrl) { URL.revokeObjectURL(musicPlayerObjectUrl); musicPlayerObjectUrl = null; }
+                audio.src = track.url;
+            } else {
+                const rawFile = await track.handle.getFile();
+                // Always override with the type derived from the extension,
+                // rather than only when rawFile.type is empty: the real error
+                // ("Failed to load because no supported source was found")
+                // showed up even with that empty-only check, meaning Chrome is
+                // handing back some truthy-but-wrong type (e.g. a generic
+                // application/octet-stream) for .flac via this API on macOS —
+                // not no type at all. The extension is authoritative here
+                // anyway, since this app controls how these files are named.
+                // Rewrapping is cheap (Blob composition, not an eager read
+                // into memory), so there's no cost to always doing it.
+                const mimeType = mimeTypeForAudioFile(track.name);
+                const file = mimeType ? new Blob([rawFile], { type: mimeType }) : rawFile;
+
+                if (musicPlayerObjectUrl) URL.revokeObjectURL(musicPlayerObjectUrl);
+                musicPlayerObjectUrl = URL.createObjectURL(file);
+                audio.src = musicPlayerObjectUrl;
+            }
+
             audio.play().catch(err => {
                 console.log('Playback failed to start for', track.name, err);
                 alert(`Couldn't play "${track.name.replace(/\.[^.]+$/, '')}": ${err.message || err.name || 'unknown playback error'}.`);
