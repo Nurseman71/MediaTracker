@@ -3142,16 +3142,18 @@ async function autoSaveToMacDirectory() {
                 <p id="miniPlayerAlbumInfo" class="text-xs text-slate-400 truncate"></p>
             </div>
         </div>
-        <div class="px-3 pb-2.5 flex items-center justify-center gap-2 relative">
-            <button onclick="miniPlayerPrev()" aria-label="Previous track" class="w-11 h-11 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 text-lg flex items-center justify-center">⏮</button>
-            <button id="miniPlayerPlayPauseBtn" onclick="toggleMiniPlayerPlayPause()" aria-label="Play or pause" class="w-12 h-12 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-xl flex items-center justify-center">▶</button>
-            <button onclick="miniPlayerNext()" aria-label="Next track" class="w-11 h-11 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 text-lg flex items-center justify-center">⏭</button>
-            <!-- Bigger tap targets (44-48px, Apple's own minimum recommendation)
-                 replaced the old row of five ~32px buttons, which is what was
-                 actually too small to comfortably tap on an iPhone. Closing the
-                 player lives in this menu (not its own dedicated button) to
-                 keep this row short enough to stay centered/uncluttered. -->
-            <button id="miniPlayerMoreBtn" onclick="toggleMiniPlayerMenu(event)" aria-label="More player actions" class="w-10 h-10 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 text-lg flex items-center justify-center ml-1">⋮</button>
+        <div class="px-3 pb-3 flex items-center justify-center gap-3 relative">
+            <!-- Now that this row doesn't share space with the track/album
+                 text (moved to its own row above), it can afford to be
+                 considerably bigger than the original 44-48px tap targets --
+                 there's a full row's width to work with and nothing else
+                 competing for it. Closing the player still lives in the ⋮
+                 menu rather than its own button, to keep this row to a
+                 clean four buttons. -->
+            <button onclick="miniPlayerPrev()" aria-label="Previous track" class="w-14 h-14 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 text-2xl flex items-center justify-center">⏮</button>
+            <button id="miniPlayerPlayPauseBtn" onclick="toggleMiniPlayerPlayPause()" aria-label="Play or pause" class="w-16 h-16 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-3xl flex items-center justify-center">▶</button>
+            <button onclick="miniPlayerNext()" aria-label="Next track" class="w-14 h-14 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 text-2xl flex items-center justify-center">⏭</button>
+            <button id="miniPlayerMoreBtn" onclick="toggleMiniPlayerMenu(event)" aria-label="More player actions" class="w-12 h-12 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 text-xl flex items-center justify-center ml-2">⋮</button>
             <div id="miniPlayerMenu" class="hidden absolute bottom-full right-3 mb-2 w-52 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
                 <button onclick="playMoreLikeThis()" class="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-slate-700 flex items-center gap-2">🔀 More Like This</button>
                 <button onclick="openCreatePlaylistModal()" class="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-slate-700 flex items-center gap-2 border-t border-slate-700/60">➕ Save as Playlist</button>
