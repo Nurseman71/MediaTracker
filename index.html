@@ -785,6 +785,10 @@
         // fetching every album's tracklist up front.
         let musicAlbumQueue = [];
         let musicAlbumQueueIndex = -1;
+        // Guards the Infinity-duration workaround in setupMiniPlayerEvents
+        // (durationchange listener) so it can only ever be mid-flight for
+        // one track at a time -- see that listener for what it's for.
+        let miniPlayerDurationFixInFlight = false;
 
         // Escapes untrusted text before it's inserted via innerHTML (titles/artists/etc.
         // come from external APIs and manual entry, so treat them as untrusted).
@@ -1868,61 +1872,49 @@
             musicPlayerIndex = index;
             const track = musicPlayerTracks[index];
             const audio = document.getElementById('miniPlayerAudio');
+            // Defensive reset for a new track in case a previous track's
+            // Infinity-duration fix (see the durationchange listener) got
+            // interrupted mid-flight by switching tracks before it finished.
+            miniPlayerDurationFixInFlight = false;
 
-            if (musicPlayerObjectUrl) { URL.revokeObjectURL(musicPlayerObjectUrl); musicPlayerObjectUrl = null; }
-
-            let rawFile;
             if (track.url) {
-                // Remote track (from the Mac's Remote Sync server). Used to
-                // set audio.src directly to the HTTP(S) URL and let the
-                // browser stream it -- real bug found on iPhone: audio.duration
-                // came back Infinity for a progressively-fetched FLAC (a
-                // variable-bitrate codec, so byte position doesn't map
-                // linearly to time the way it does for a constant-bitrate
-                // format), and Safari's media engine wasn't resolving a
-                // usable duration or seekable range from the partial stream
-                // either -- so the progress bar and time display never
-                // worked, even though audio played fine. Downloading the
-                // whole track via fetch() first and playing it as a blob:
-                // URL sidesteps this: it's the exact same mechanism the
-                // desktop folder-connect path below already uses
-                // successfully, which never had this problem, since the
-                // browser has the complete file (and therefore a real,
-                // known duration) before playback ever starts. Costs a
-                // short delay before playback starts (proportional to file
-                // size and network speed) instead of a near-instant
-                // streaming start -- a working progress bar/seek is worth
-                // more than saving a couple seconds on a home network.
-                document.getElementById('miniPlayerTrackName').innerText = `⏳ Loading ${track.name.replace(/\.[^.]+$/, '')}...`;
-                try {
-                    const res = await fetch(track.url);
-                    if (!res.ok) throw new Error(`Server returned ${res.status}`);
-                    rawFile = await res.blob();
-                } catch (e) {
-                    console.log('Failed to download remote track', track.name, e);
-                    alert(`Couldn't download "${track.name.replace(/\.[^.]+$/, '')}" from your Mac: ${e.message || 'unknown error'}.`);
-                    return;
-                }
+                // Remote track (streamed from the Mac's Remote Sync
+                // server). A prior attempt at this fixed the frozen
+                // progress bar by fully downloading the track via fetch()
+                // into a Blob before playing it, same as the local-handle
+                // path below -- but that broke playback outright on
+                // iPhone: awaiting a fetch() before calling audio.play()
+                // pushes .play() outside the original tap's user-gesture
+                // window, and iOS Safari's autoplay policy then rejects it
+                // with NotAllowedError ("the user denied permission") even
+                // though no one actually denied anything. A working
+                // progress bar isn't worth trading for playback that
+                // doesn't work at all, so this reverts to streaming the
+                // URL directly -- audio.play() stays synchronous with the
+                // tap. See setupMiniPlayerEvents' durationchange handler
+                // for the separate, non-blocking fix for the progress bar
+                // itself (the actual Infinity-duration issue this caused).
+                if (musicPlayerObjectUrl) { URL.revokeObjectURL(musicPlayerObjectUrl); musicPlayerObjectUrl = null; }
+                audio.src = track.url;
             } else {
-                rawFile = await track.handle.getFile();
-            }
+                const rawFile = await track.handle.getFile();
+                // Always override with the type derived from the extension,
+                // rather than only when rawFile.type is empty: the real error
+                // ("Failed to load because no supported source was found")
+                // showed up even with that empty-only check, meaning Chrome is
+                // handing back some truthy-but-wrong type (e.g. a generic
+                // application/octet-stream) for .flac via this API on macOS —
+                // not no type at all. The extension is authoritative here
+                // anyway, since this app controls how these files are named.
+                // Rewrapping is cheap (Blob composition, not an eager read
+                // into memory), so there's no cost to always doing it.
+                const mimeType = mimeTypeForAudioFile(track.name);
+                const file = mimeType ? new Blob([rawFile], { type: mimeType }) : rawFile;
 
-            // Always override with the type derived from the extension,
-            // rather than only when rawFile.type is empty: the real error
-            // ("Failed to load because no supported source was found")
-            // showed up even with that empty-only check, meaning Chrome is
-            // handing back some truthy-but-wrong type (e.g. a generic
-            // application/octet-stream) for .flac via this API on macOS —
-            // not no type at all. The extension is authoritative here
-            // anyway, since this app controls how these files are named.
-            // Rewrapping is cheap (Blob composition, not an eager read
-            // into memory), so there's no cost to always doing it. Same
-            // logic now covers both the local-handle and remote-fetch
-            // sources, rather than duplicating it per source.
-            const mimeType = mimeTypeForAudioFile(track.name);
-            const file = mimeType ? new Blob([rawFile], { type: mimeType }) : rawFile;
-            musicPlayerObjectUrl = URL.createObjectURL(file);
-            audio.src = musicPlayerObjectUrl;
+                if (musicPlayerObjectUrl) URL.revokeObjectURL(musicPlayerObjectUrl);
+                musicPlayerObjectUrl = URL.createObjectURL(file);
+                audio.src = musicPlayerObjectUrl;
+            }
 
             audio.play().catch(err => {
                 console.log('Playback failed to start for', track.name, err);
@@ -2217,6 +2209,34 @@
             audio.addEventListener('ended', miniPlayerNext);
             audio.addEventListener('play', updateMiniPlayerPlayPauseIcon);
             audio.addEventListener('pause', updateMiniPlayerPlayPauseIcon);
+            audio.addEventListener('durationchange', () => {
+                // Standard workaround for a well-documented browser quirk:
+                // streamed audio can report duration as Infinity even
+                // though the server sends a real, finite total size --
+                // confirmed happening on iPhone for FLAC streamed from the
+                // Remote Sync server (effectiveAudioDuration()'s
+                // audio.seekable fallback also came back empty here, so
+                // that alone wasn't enough). Seeking far past the end
+                // forces the browser to resolve the real duration from the
+                // server's Content-Range response, which does carry the
+                // true total size regardless of what the container's own
+                // duration metadata says; resuming at the original position
+                // afterward makes this invisible to the listener. Guarded
+                // by miniPlayerDurationFixInFlight so it can only run once
+                // per track and can't turn into a seek loop -- if it
+                // doesn't resolve to a finite duration, effectiveAudioDuration()
+                // just keeps returning 0 and the bar stays where it was,
+                // same as before this existed, rather than breaking anything.
+                if (audio.duration !== Infinity || miniPlayerDurationFixInFlight) return;
+                miniPlayerDurationFixInFlight = true;
+                const resumeAt = audio.currentTime;
+                audio.currentTime = 1e101;
+                audio.addEventListener('seeked', function onSeeked() {
+                    audio.removeEventListener('seeked', onSeeked);
+                    audio.currentTime = resumeAt;
+                    miniPlayerDurationFixInFlight = false;
+                }, { once: true });
+            });
             audio.addEventListener('error', () => {
                 // Without this, a decode/format failure leaves the UI
                 // looking like it's playing (paused flips to false as
