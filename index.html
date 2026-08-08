@@ -1709,18 +1709,46 @@
             }
         }
 
+        function mimeTypeForAudioFile(name) {
+            // FileSystemFileHandle.getFile() often hands back a File with
+            // an empty/unreliable `type` for less-common extensions like
+            // .flac (it depends on the OS's own file-type database, unlike
+            // a normal HTTP response with a real Content-Type header). A
+            // blob: URL carries only whatever type the Blob was given —
+            // with no type at all, <audio> can silently fail to decode it
+            // (paused flips to false as soon as play() is called, so the
+            // UI looks like it's playing, but nothing ever actually
+            // decodes: stuck at 0:00 duration, no sound). Reconstructing
+            // the Blob with an explicit type fixes that.
+            const lower = (name || '').toLowerCase();
+            if (lower.endsWith('.flac')) return 'audio/flac';
+            if (lower.endsWith('.mp3')) return 'audio/mpeg';
+            if (lower.endsWith('.m4a')) return 'audio/mp4';
+            if (lower.endsWith('.wav')) return 'audio/wav';
+            if (lower.endsWith('.aac')) return 'audio/aac';
+            if (lower.endsWith('.ogg')) return 'audio/ogg';
+            return '';
+        }
+
         async function loadAndPlayTrack(index) {
             if (index < 0 || index >= musicPlayerTracks.length) return;
             musicPlayerIndex = index;
             const track = musicPlayerTracks[index];
-            const file = await track.handle.getFile();
+            const rawFile = await track.handle.getFile();
+            // Only rewrap when the type is missing — rewrapping is cheap
+            // (Blob composition, not an eager read into memory) but no
+            // need to do it when the browser already got it right.
+            const file = rawFile.type ? rawFile : new Blob([rawFile], { type: mimeTypeForAudioFile(track.name) });
 
             if (musicPlayerObjectUrl) URL.revokeObjectURL(musicPlayerObjectUrl);
             musicPlayerObjectUrl = URL.createObjectURL(file);
 
             const audio = document.getElementById('miniPlayerAudio');
             audio.src = musicPlayerObjectUrl;
-            audio.play().catch(() => {});
+            audio.play().catch(err => {
+                console.log('Playback failed to start for', track.name, err);
+                alert(`Couldn't play "${track.name.replace(/\.[^.]+$/, '')}": ${err.message || err.name || 'unknown playback error'}.`);
+            });
 
             document.getElementById('miniPlayerTrackName').innerText = track.name.replace(/\.[^.]+$/, '');
             document.getElementById('miniPlayerAlbumInfo').innerText = musicPlayerItem ? `${musicPlayerItem.creator} — ${musicPlayerItem.title}` : '';
@@ -1777,6 +1805,19 @@
             audio.addEventListener('ended', miniPlayerNext);
             audio.addEventListener('play', updateMiniPlayerPlayPauseIcon);
             audio.addEventListener('pause', updateMiniPlayerPlayPauseIcon);
+            audio.addEventListener('error', () => {
+                // Without this, a decode/format failure leaves the UI
+                // looking like it's playing (paused flips to false as
+                // soon as play() is called) while producing dead silence
+                // forever — exactly the confusing "no audio" state this
+                // is meant to catch and surface instead of hide.
+                const err = audio.error;
+                const reasons = { 1: 'aborted', 2: 'network error', 3: "couldn't decode this file", 4: 'format not supported by this browser' };
+                const reason = err ? (reasons[err.code] || `error code ${err.code}`) : 'unknown error';
+                console.log('Audio element error:', err);
+                const trackLabel = document.getElementById('miniPlayerTrackName').innerText || 'this track';
+                alert(`Playback stopped for "${trackLabel}": ${reason}.`);
+            });
             audio.addEventListener('timeupdate', () => {
                 const bar = document.getElementById('miniPlayerSeek');
                 const timeLabel = document.getElementById('miniPlayerTime');
