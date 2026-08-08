@@ -1915,13 +1915,39 @@
                 alert(`Couldn't play "${track.name.replace(/\.[^.]+$/, '')}": ${err.message || err.name || 'unknown playback error'}.`);
             });
 
-            document.getElementById('miniPlayerTrackName').innerText = track.name.replace(/\.[^.]+$/, '');
+            const trackTitle = track.name.replace(/\.[^.]+$/, '');
+            document.getElementById('miniPlayerTrackName').innerText = trackTitle;
             document.getElementById('miniPlayerAlbumInfo').innerText = musicPlayerItem ? `${musicPlayerItem.creator} — ${musicPlayerItem.title}` : '';
             document.getElementById('miniPlayerCover').src = musicPlayerItem ? musicPlayerItem.image : '';
             document.getElementById('miniPlayerBar').classList.remove('hidden');
             updateMiniPlayerPlayPauseIcon();
+            updateMediaSessionMetadata(trackTitle);
 
             if (track.url) upgradeStreamedTrackToBlob(track, index);
+        }
+
+        // Publishes what's playing to the OS-level "Now Playing" session
+        // (Lock Screen, Control Center, AirPods/headphone remote buttons,
+        // and -- the actual reason this exists -- CarPlay's Now Playing
+        // screen, which has no concept of a website/PWA as its own app but
+        // does mirror whatever the system's current media session is,
+        // regardless of which app produced it). Deliberately doesn't call
+        // navigator.mediaSession.setPositionState() -- that would need a
+        // real duration, which is exactly the value that turned out to be
+        // unreliable for streamed FLAC on iPhone (see the removed seek bar/
+        // time display) -- so the system UI shows play/pause/skip controls
+        // without a scrubber, same graceful degradation already chosen for
+        // the in-app UI, rather than risking a broken one there too.
+        function updateMediaSessionMetadata(trackTitle) {
+            if (!('mediaSession' in navigator)) return;
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: trackTitle,
+                artist: musicPlayerItem ? musicPlayerItem.creator : '',
+                album: musicPlayerItem ? musicPlayerItem.title : '',
+                artwork: (musicPlayerItem && musicPlayerItem.image)
+                    ? [{ src: musicPlayerItem.image, sizes: '512x512', type: 'image/jpeg' }]
+                    : [],
+            });
         }
 
         // Runs in the background after a remote track has already started
@@ -2022,6 +2048,13 @@
             musicAlbumQueue = []; musicAlbumQueueIndex = -1;
             document.getElementById('miniPlayerBar').classList.add('hidden');
             closeMiniPlayerMenu();
+            // Clears the Lock Screen/Control Center/CarPlay Now Playing
+            // display too, rather than leaving it showing a track that's
+            // no longer actually loaded.
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.metadata = null;
+                navigator.mediaSession.playbackState = 'none';
+            }
         }
 
         // --- SHUFFLE / SIMILARITY / PLAYLISTS ---
@@ -2218,8 +2251,14 @@
         function setupMiniPlayerEvents() {
             const audio = document.getElementById('miniPlayerAudio');
             audio.addEventListener('ended', miniPlayerNext);
-            audio.addEventListener('play', updateMiniPlayerPlayPauseIcon);
-            audio.addEventListener('pause', updateMiniPlayerPlayPauseIcon);
+            audio.addEventListener('play', () => {
+                updateMiniPlayerPlayPauseIcon();
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+            });
+            audio.addEventListener('pause', () => {
+                updateMiniPlayerPlayPauseIcon();
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+            });
             audio.addEventListener('error', () => {
                 // Without this, a decode/format failure leaves the UI
                 // looking like it's playing (paused flips to false as
@@ -2233,6 +2272,18 @@
                 const trackLabel = document.getElementById('miniPlayerTrackName').innerText || 'this track';
                 alert(`Playback stopped for "${trackLabel}": ${reason}.`);
             });
+
+            // Lets the Lock Screen, Control Center, AirPods/headphone remote
+            // buttons, and CarPlay's Now Playing screen actually control
+            // playback, not just display it -- without these handlers, the
+            // OS has metadata to show but no way to act on a tap/button
+            // press from outside the app itself.
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.setActionHandler('play', () => audio.play().catch(() => {}));
+                navigator.mediaSession.setActionHandler('pause', () => audio.pause());
+                navigator.mediaSession.setActionHandler('previoustrack', () => miniPlayerPrev());
+                navigator.mediaSession.setActionHandler('nexttrack', () => miniPlayerNext());
+            }
         }
 
         async function scanSyncDirectoryFiles() {
