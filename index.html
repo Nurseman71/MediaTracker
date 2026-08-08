@@ -395,6 +395,11 @@
                             </a>
                         </div>
                         <div id="ownedItemControls" class="hidden flex flex-col gap-2.5">
+                            <div id="modalPlayMusicContainer" class="hidden">
+                                <button id="modalPlayBtn" onclick="playAlbum(currentDetailItemId, event)" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 rounded-lg transition-colors">
+                                    ▶ Play Album
+                                </button>
+                            </div>
                             <div class="flex gap-2">
                                 <select id="modalFormatSelect" onchange="updateItemFormatCondition()" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200">
                                     <option value="">Format...</option>
@@ -724,6 +729,10 @@
         let itemCacheForUndo = null;
         let undoTimeoutTimer = null;
         let localDirectoryHandle = null;
+        let musicPlayerTracks = [];
+        let musicPlayerIndex = -1;
+        let musicPlayerItem = null;
+        let musicPlayerObjectUrl = null;
         let isAwaitingReauthorization = false;
         let remoteSyncInFlight = false;
 
@@ -1556,6 +1565,184 @@
             document.getElementById('syncFolderBtn').className = "hidden md:flex bg-emerald-950 text-emerald-400 font-bold text-sm px-4 py-2.5 rounded-xl shadow-md border border-emerald-500/40 pointer-events-none items-center gap-1.5";
         }
 
+        // --- MUSIC PLAYBACK (audio files only) ---
+        // Reads ripped tracks directly out of the connected Media Vault
+        // folder via the File System Access API. Only works on desktop
+        // (Chrome/Edge on macOS) with the folder connected — GitHub Pages
+        // itself stores no media files, only this app's code.
+
+        const AUDIO_FILE_EXTENSIONS = ['.flac', '.mp3', '.m4a', '.wav', '.aac', '.ogg'];
+
+        function sanitizeForFolderMatch(name) {
+            // Mirrors the `!`/`:` stripping Vaultkeeper's own rip-time
+            // sanitizer applies (see MEDIA_STYLE_GUIDE.md), so a folder
+            // name that's diverged slightly from the catalog title (or a
+            // title fixed by hand after a wrong-candidate match) can still
+            // be found instead of failing outright.
+            return (name || '').toLowerCase().replace(/[!:]/g, '').replace(/\s+/g, ' ').trim();
+        }
+
+        async function findChildDirectoryByName(parentHandle, targetName) {
+            try {
+                return await parentHandle.getDirectoryHandle(targetName, { create: false });
+            } catch (e) {
+                // Fall through to a fuzzy scan below.
+            }
+            const target = sanitizeForFolderMatch(targetName);
+            try {
+                for await (const [name, handle] of parentHandle.entries()) {
+                    if (handle.kind === 'directory' && sanitizeForFolderMatch(name) === target) return handle;
+                }
+            } catch (e) {}
+            return null;
+        }
+
+        function naturalCompareFilenames(a, b) {
+            // So "2 - Song.flac" sorts before "10 - Song.flac" — a plain
+            // string sort would put "10" first and scramble track order.
+            return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+        }
+
+        async function resolveAlbumDirectoryHandle(item) {
+            if (!localDirectoryHandle) return null;
+            try {
+                const musicDir = await localDirectoryHandle.getDirectoryHandle('Music', { create: false });
+                const artistDir = await findChildDirectoryByName(musicDir, item.creator);
+                if (!artistDir) return null;
+                return await findChildDirectoryByName(artistDir, item.title);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        async function collectAudioTrackHandles(albumDirHandle) {
+            const tracks = [];
+            for await (const [name, handle] of albumDirHandle.entries()) {
+                if (handle.kind !== 'file') continue;
+                const lower = name.toLowerCase();
+                if (AUDIO_FILE_EXTENSIONS.some(ext => lower.endsWith(ext))) tracks.push({ name, handle });
+            }
+            tracks.sort((a, b) => naturalCompareFilenames(a.name, b.name));
+            return tracks;
+        }
+
+        async function playAlbum(itemId, event) {
+            if (event) event.stopPropagation();
+            const item = collection.find(i => i.id === itemId);
+            if (!item || item.type !== 'music') return;
+
+            if (!localDirectoryHandle) {
+                alert('Connect your Media Vault folder first (the "Folder Connected" button) — playback reads the actual audio files from disk, which only works on the desktop app with the folder connected.');
+                return;
+            }
+
+            const playBtn = document.getElementById(`playBtn-${itemId}`);
+            const originalBtnText = playBtn ? playBtn.innerText : null;
+            if (playBtn) playBtn.innerText = '⏳ Loading...';
+
+            try {
+                let albumDir = await resolveAlbumDirectoryHandle(item);
+                if (!albumDir) {
+                    const wantsManual = confirm(`Couldn't find a matching folder for "${item.title}" under Music/${item.creator}/. Pick the album folder manually?`);
+                    if (!wantsManual) return;
+                    albumDir = await window.showDirectoryPicker({ mode: 'read', startIn: localDirectoryHandle }).catch(() => null);
+                    if (!albumDir) return;
+                }
+
+                const tracks = await collectAudioTrackHandles(albumDir);
+                if (tracks.length === 0) {
+                    alert(`No audio files found in that folder for "${item.title}".`);
+                    return;
+                }
+
+                musicPlayerTracks = tracks;
+                musicPlayerItem = item;
+                await loadAndPlayTrack(0);
+            } catch (e) {
+                console.log('Album playback failed to start.', e);
+                alert("Could not open that album's files. Make sure the folder is still connected and try again.");
+            } finally {
+                if (playBtn) playBtn.innerText = originalBtnText;
+            }
+        }
+
+        async function loadAndPlayTrack(index) {
+            if (index < 0 || index >= musicPlayerTracks.length) return;
+            musicPlayerIndex = index;
+            const track = musicPlayerTracks[index];
+            const file = await track.handle.getFile();
+
+            if (musicPlayerObjectUrl) URL.revokeObjectURL(musicPlayerObjectUrl);
+            musicPlayerObjectUrl = URL.createObjectURL(file);
+
+            const audio = document.getElementById('miniPlayerAudio');
+            audio.src = musicPlayerObjectUrl;
+            audio.play().catch(() => {});
+
+            document.getElementById('miniPlayerTrackName').innerText = track.name.replace(/\.[^.]+$/, '');
+            document.getElementById('miniPlayerAlbumInfo').innerText = musicPlayerItem ? `${musicPlayerItem.creator} — ${musicPlayerItem.title}` : '';
+            document.getElementById('miniPlayerCover').src = musicPlayerItem ? musicPlayerItem.image : '';
+            document.getElementById('miniPlayerBar').classList.remove('hidden');
+            updateMiniPlayerPlayPauseIcon();
+        }
+
+        function miniPlayerNext() {
+            if (musicPlayerIndex + 1 < musicPlayerTracks.length) loadAndPlayTrack(musicPlayerIndex + 1);
+        }
+
+        function miniPlayerPrev() {
+            const audio = document.getElementById('miniPlayerAudio');
+            if (audio.currentTime > 3) { audio.currentTime = 0; return; }
+            if (musicPlayerIndex - 1 >= 0) loadAndPlayTrack(musicPlayerIndex - 1);
+            else audio.currentTime = 0;
+        }
+
+        function toggleMiniPlayerPlayPause() {
+            const audio = document.getElementById('miniPlayerAudio');
+            if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+        }
+
+        function updateMiniPlayerPlayPauseIcon() {
+            const audio = document.getElementById('miniPlayerAudio');
+            const btn = document.getElementById('miniPlayerPlayPauseBtn');
+            if (btn) btn.innerText = audio.paused ? '▶' : '⏸';
+        }
+
+        function closeMiniPlayer() {
+            const audio = document.getElementById('miniPlayerAudio');
+            audio.pause();
+            audio.src = '';
+            if (musicPlayerObjectUrl) { URL.revokeObjectURL(musicPlayerObjectUrl); musicPlayerObjectUrl = null; }
+            musicPlayerTracks = []; musicPlayerIndex = -1; musicPlayerItem = null;
+            document.getElementById('miniPlayerBar').classList.add('hidden');
+        }
+
+        function formatPlayerTime(seconds) {
+            if (!Number.isFinite(seconds)) return '0:00';
+            const m = Math.floor(seconds / 60);
+            const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+            return `${m}:${s}`;
+        }
+
+        function seekMiniPlayer(value) {
+            const audio = document.getElementById('miniPlayerAudio');
+            if (audio.duration) audio.currentTime = (value / 100) * audio.duration;
+        }
+
+        function setupMiniPlayerEvents() {
+            const audio = document.getElementById('miniPlayerAudio');
+            audio.addEventListener('ended', miniPlayerNext);
+            audio.addEventListener('play', updateMiniPlayerPlayPauseIcon);
+            audio.addEventListener('pause', updateMiniPlayerPlayPauseIcon);
+            audio.addEventListener('timeupdate', () => {
+                const bar = document.getElementById('miniPlayerSeek');
+                const timeLabel = document.getElementById('miniPlayerTime');
+                if (!bar || !audio.duration) return;
+                if (!bar.matches(':active')) bar.value = (audio.currentTime / audio.duration) * 100 || 0;
+                timeLabel.innerText = `${formatPlayerTime(audio.currentTime)} / ${formatPlayerTime(audio.duration)}`;
+            });
+        }
+
         async function scanSyncDirectoryFiles() {
             if (!localDirectoryHandle) return;
             let loadedCollection = [];
@@ -1789,6 +1976,9 @@ async function autoSaveToMacDirectory() {
             loanBtn.innerText = (item.loan && item.loan.borrower) ? `📦 Lent to ${item.loan.borrower}` : '📦 Manage Loan';
             const wishlistBtn = document.getElementById('wishlistToggleBtn');
             wishlistBtn.innerText = item.wishlist ? '📦 Move to Vault' : '⭐ Add to Wishlist';
+
+            const playContainer = document.getElementById('modalPlayMusicContainer');
+            playContainer.classList.toggle('hidden', !(item.type === 'music' && !item.wishlist));
         }
 
         function updateItemFormatCondition() {
@@ -2467,6 +2657,7 @@ async function autoSaveToMacDirectory() {
                     </div>
                     <div class="px-3 pb-3 flex gap-1.5">
                         ${item.wishlist ? `<button onclick="markItemAsOwned('${item.id}', event)" aria-label="Mark ${escapeHtml(item.title)} as owned" class="flex-1 bg-emerald-950/60 border border-emerald-700/60 text-emerald-300 hover:text-emerald-200 font-bold text-[10px] uppercase tracking-wider py-1.5 rounded-lg transition-all">✅ Own It</button>` : ''}
+                        ${(!item.wishlist && item.type === 'music') ? `<button id="playBtn-${item.id}" onclick="playAlbum('${item.id}', event)" aria-label="Play ${escapeHtml(item.title)}" class="flex-1 bg-indigo-950/60 border border-indigo-700/60 text-indigo-300 hover:text-indigo-200 font-bold text-[10px] uppercase tracking-wider py-1.5 rounded-lg transition-all">▶ Play</button>` : ''}
                         <button onclick="deleteItem('${item.id}', event)" aria-label="Remove ${escapeHtml(item.title)} from vault" class="flex-1 bg-slate-900/40 border border-slate-800 text-slate-400 hover:text-rose-400 font-bold text-[10px] uppercase tracking-wider py-1.5 rounded-lg transition-all">
                             Remove
                         </button>
@@ -2479,6 +2670,30 @@ async function autoSaveToMacDirectory() {
         runDataMigrationChecks();
         renderCollection();
         loadCachedHandleFromStorage();
+        setupMiniPlayerEvents();
     </script>
+
+    <!-- MINI PLAYER: audio-only playback of ripped tracks, reading directly
+         from the connected Media Vault folder via the File System Access
+         API. Requires "Folder Connected" (desktop Chrome/Edge on macOS) —
+         there is no file storage on the hosted GitHub Pages side. -->
+    <div id="miniPlayerBar" class="hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-md border-t border-slate-700/60 shadow-2xl">
+        <input type="range" id="miniPlayerSeek" min="0" max="100" value="0" oninput="seekMiniPlayer(this.value)" aria-label="Seek" class="w-full h-1 accent-indigo-500 cursor-pointer block">
+        <div class="px-3 py-2 flex items-center gap-3">
+            <img id="miniPlayerCover" src="" alt="" class="w-10 h-10 rounded-md object-cover flex-shrink-0 bg-slate-950">
+            <div class="min-w-0 flex-grow">
+                <p id="miniPlayerTrackName" class="text-xs font-bold text-slate-100 truncate"></p>
+                <p id="miniPlayerAlbumInfo" class="text-[10px] text-slate-400 truncate"></p>
+            </div>
+            <span id="miniPlayerTime" class="text-[10px] text-slate-500 hidden sm:inline flex-shrink-0">0:00 / 0:00</span>
+            <div class="flex items-center gap-1.5 flex-shrink-0">
+                <button onclick="miniPlayerPrev()" aria-label="Previous track" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center">⏮</button>
+                <button id="miniPlayerPlayPauseBtn" onclick="toggleMiniPlayerPlayPause()" aria-label="Play or pause" class="w-9 h-9 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center">▶</button>
+                <button onclick="miniPlayerNext()" aria-label="Next track" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center">⏭</button>
+                <button onclick="closeMiniPlayer()" aria-label="Close player" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 flex items-center justify-center ml-1">&times;</button>
+            </div>
+        </div>
+        <audio id="miniPlayerAudio"></audio>
+    </div>
 </body>
 </html>
