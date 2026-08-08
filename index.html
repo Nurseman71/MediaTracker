@@ -1735,10 +1735,18 @@
             musicPlayerIndex = index;
             const track = musicPlayerTracks[index];
             const rawFile = await track.handle.getFile();
-            // Only rewrap when the type is missing — rewrapping is cheap
-            // (Blob composition, not an eager read into memory) but no
-            // need to do it when the browser already got it right.
-            const file = rawFile.type ? rawFile : new Blob([rawFile], { type: mimeTypeForAudioFile(track.name) });
+            // Always override with the type derived from the extension,
+            // rather than only when rawFile.type is empty: the real error
+            // ("Failed to load because no supported source was found")
+            // showed up even with that empty-only check, meaning Chrome is
+            // handing back some truthy-but-wrong type (e.g. a generic
+            // application/octet-stream) for .flac via this API on macOS —
+            // not no type at all. The extension is authoritative here
+            // anyway, since this app controls how these files are named.
+            // Rewrapping is cheap (Blob composition, not an eager read
+            // into memory), so there's no cost to always doing it.
+            const mimeType = mimeTypeForAudioFile(track.name);
+            const file = mimeType ? new Blob([rawFile], { type: mimeType }) : rawFile;
 
             if (musicPlayerObjectUrl) URL.revokeObjectURL(musicPlayerObjectUrl);
             musicPlayerObjectUrl = URL.createObjectURL(file);
