@@ -1869,34 +1869,60 @@
             const track = musicPlayerTracks[index];
             const audio = document.getElementById('miniPlayerAudio');
 
-            if (track.url) {
-                // Remote track (streamed from the Mac's Remote Sync
-                // server): a real HTTP(S) URL with a correct Content-Type
-                // and Range support set server-side — no blob/MIME
-                // workaround needed here, since that whole class of
-                // problem was the browser guessing at a local file's type,
-                // which doesn't apply to a normal network response.
-                if (musicPlayerObjectUrl) { URL.revokeObjectURL(musicPlayerObjectUrl); musicPlayerObjectUrl = null; }
-                audio.src = track.url;
-            } else {
-                const rawFile = await track.handle.getFile();
-                // Always override with the type derived from the extension,
-                // rather than only when rawFile.type is empty: the real error
-                // ("Failed to load because no supported source was found")
-                // showed up even with that empty-only check, meaning Chrome is
-                // handing back some truthy-but-wrong type (e.g. a generic
-                // application/octet-stream) for .flac via this API on macOS —
-                // not no type at all. The extension is authoritative here
-                // anyway, since this app controls how these files are named.
-                // Rewrapping is cheap (Blob composition, not an eager read
-                // into memory), so there's no cost to always doing it.
-                const mimeType = mimeTypeForAudioFile(track.name);
-                const file = mimeType ? new Blob([rawFile], { type: mimeType }) : rawFile;
+            if (musicPlayerObjectUrl) { URL.revokeObjectURL(musicPlayerObjectUrl); musicPlayerObjectUrl = null; }
 
-                if (musicPlayerObjectUrl) URL.revokeObjectURL(musicPlayerObjectUrl);
-                musicPlayerObjectUrl = URL.createObjectURL(file);
-                audio.src = musicPlayerObjectUrl;
+            let rawFile;
+            if (track.url) {
+                // Remote track (from the Mac's Remote Sync server). Used to
+                // set audio.src directly to the HTTP(S) URL and let the
+                // browser stream it -- real bug found on iPhone: audio.duration
+                // came back Infinity for a progressively-fetched FLAC (a
+                // variable-bitrate codec, so byte position doesn't map
+                // linearly to time the way it does for a constant-bitrate
+                // format), and Safari's media engine wasn't resolving a
+                // usable duration or seekable range from the partial stream
+                // either -- so the progress bar and time display never
+                // worked, even though audio played fine. Downloading the
+                // whole track via fetch() first and playing it as a blob:
+                // URL sidesteps this: it's the exact same mechanism the
+                // desktop folder-connect path below already uses
+                // successfully, which never had this problem, since the
+                // browser has the complete file (and therefore a real,
+                // known duration) before playback ever starts. Costs a
+                // short delay before playback starts (proportional to file
+                // size and network speed) instead of a near-instant
+                // streaming start -- a working progress bar/seek is worth
+                // more than saving a couple seconds on a home network.
+                document.getElementById('miniPlayerTrackName').innerText = `⏳ Loading ${track.name.replace(/\.[^.]+$/, '')}...`;
+                try {
+                    const res = await fetch(track.url);
+                    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+                    rawFile = await res.blob();
+                } catch (e) {
+                    console.log('Failed to download remote track', track.name, e);
+                    alert(`Couldn't download "${track.name.replace(/\.[^.]+$/, '')}" from your Mac: ${e.message || 'unknown error'}.`);
+                    return;
+                }
+            } else {
+                rawFile = await track.handle.getFile();
             }
+
+            // Always override with the type derived from the extension,
+            // rather than only when rawFile.type is empty: the real error
+            // ("Failed to load because no supported source was found")
+            // showed up even with that empty-only check, meaning Chrome is
+            // handing back some truthy-but-wrong type (e.g. a generic
+            // application/octet-stream) for .flac via this API on macOS —
+            // not no type at all. The extension is authoritative here
+            // anyway, since this app controls how these files are named.
+            // Rewrapping is cheap (Blob composition, not an eager read
+            // into memory), so there's no cost to always doing it. Same
+            // logic now covers both the local-handle and remote-fetch
+            // sources, rather than duplicating it per source.
+            const mimeType = mimeTypeForAudioFile(track.name);
+            const file = mimeType ? new Blob([rawFile], { type: mimeType }) : rawFile;
+            musicPlayerObjectUrl = URL.createObjectURL(file);
+            audio.src = musicPlayerObjectUrl;
 
             audio.play().catch(err => {
                 console.log('Playback failed to start for', track.name, err);
