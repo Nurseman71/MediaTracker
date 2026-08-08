@@ -785,10 +785,6 @@
         // fetching every album's tracklist up front.
         let musicAlbumQueue = [];
         let musicAlbumQueueIndex = -1;
-        // Guards the Infinity-duration workaround in setupMiniPlayerEvents
-        // (durationchange listener) so it can only ever be mid-flight for
-        // one track at a time -- see that listener for what it's for.
-        let miniPlayerDurationFixInFlight = false;
 
         // Escapes untrusted text before it's inserted via innerHTML (titles/artists/etc.
         // come from external APIs and manual entry, so treat them as untrusted).
@@ -1872,10 +1868,6 @@
             musicPlayerIndex = index;
             const track = musicPlayerTracks[index];
             const audio = document.getElementById('miniPlayerAudio');
-            // Defensive reset for a new track in case a previous track's
-            // Infinity-duration fix (see the durationchange listener) got
-            // interrupted mid-flight by switching tracks before it finished.
-            miniPlayerDurationFixInFlight = false;
 
             if (track.url) {
                 // Remote track (streamed from the Mac's Remote Sync
@@ -2173,78 +2165,11 @@
             if (menu && !menu.contains(e.target) && toggleBtn && !toggleBtn.contains(e.target)) closeMiniPlayerMenu();
         });
 
-        function formatPlayerTime(seconds) {
-            if (!Number.isFinite(seconds)) return '0:00';
-            const m = Math.floor(seconds / 60);
-            const s = Math.floor(seconds % 60).toString().padStart(2, '0');
-            return `${m}:${s}`;
-        }
-
-        // audio.duration is sometimes not a usable finite number for
-        // HTTP-streamed audio (can report Infinity even for a normal,
-        // finite file served with a real total size) -- audio.seekable's
-        // own end time is derived from the server-confirmed byte size via
-        // Content-Range instead of the container's own duration metadata,
-        // so it's the more reliable source for streamed playback. Local
-        // blob: URLs (desktop folder-connect path) almost always have a
-        // perfectly good audio.duration already, so this only changes
-        // behavior for the case that was actually broken.
-        function effectiveAudioDuration(audio) {
-            if (Number.isFinite(audio.duration) && audio.duration > 0) return audio.duration;
-            if (audio.seekable && audio.seekable.length > 0) {
-                const end = audio.seekable.end(audio.seekable.length - 1);
-                if (Number.isFinite(end) && end > 0) return end;
-            }
-            return 0;
-        }
-
-        // Standard workaround for a well-documented browser quirk: streamed
-        // audio can fail to report a usable duration (Infinity, or just
-        // stuck at NaN and never resolving) even though the server sends a
-        // real, finite total size -- confirmed happening on iPhone for FLAC
-        // streamed from the Remote Sync server, badly enough that even
-        // audio.seekable (effectiveAudioDuration()'s fallback) never
-        // populated either. Seeking far past the end forces the browser to
-        // resolve the real duration from the server's Content-Range
-        // response, which carries the true total size regardless of what
-        // the container's own duration metadata says; resuming at the
-        // original position afterward makes this invisible. Called from
-        // both 'durationchange' (the textbook trigger point) and every
-        // 'timeupdate' tick (belt and suspenders -- durationchange isn't
-        // guaranteed to fire at all for a stream whose duration never
-        // becomes known the normal way, but timeupdate reliably does fire
-        // throughout playback, confirmed since audio was audibly playing).
-        // Guarded by miniPlayerDurationFixInFlight so it can only run once
-        // per track and can't turn into a seek loop -- if it still doesn't
-        // resolve to a finite duration, effectiveAudioDuration() just keeps
-        // returning 0 and the bar stays where it was, same as before this
-        // existed, rather than breaking anything. Never touches audio.src
-        // or calls play(), so it can't affect the tap-gesture/autoplay
-        // requirement the way the reverted fetch-then-blob attempt did.
-        function attemptDurationFix(audio) {
-            if (Number.isFinite(audio.duration) || miniPlayerDurationFixInFlight) return;
-            miniPlayerDurationFixInFlight = true;
-            const resumeAt = audio.currentTime;
-            audio.currentTime = 1e101;
-            audio.addEventListener('seeked', function onSeeked() {
-                audio.removeEventListener('seeked', onSeeked);
-                audio.currentTime = resumeAt;
-                miniPlayerDurationFixInFlight = false;
-            }, { once: true });
-        }
-
-        function seekMiniPlayer(value) {
-            const audio = document.getElementById('miniPlayerAudio');
-            const duration = effectiveAudioDuration(audio);
-            if (duration) audio.currentTime = (value / 100) * duration;
-        }
-
         function setupMiniPlayerEvents() {
             const audio = document.getElementById('miniPlayerAudio');
             audio.addEventListener('ended', miniPlayerNext);
             audio.addEventListener('play', updateMiniPlayerPlayPauseIcon);
             audio.addEventListener('pause', updateMiniPlayerPlayPauseIcon);
-            audio.addEventListener('durationchange', () => attemptDurationFix(audio));
             audio.addEventListener('error', () => {
                 // Without this, a decode/format failure leaves the UI
                 // looking like it's playing (paused flips to false as
@@ -2257,31 +2182,6 @@
                 console.log('Audio element error:', err);
                 const trackLabel = document.getElementById('miniPlayerTrackName').innerText || 'this track';
                 alert(`Playback stopped for "${trackLabel}": ${reason}.`);
-            });
-            audio.addEventListener('timeupdate', () => {
-                const bar = document.getElementById('miniPlayerSeek');
-                const timeLabel = document.getElementById('miniPlayerTime');
-                if (!bar) return;
-                attemptDurationFix(audio);
-                const duration = effectiveAudioDuration(audio);
-                // Real bug, not just an edge case: for HTTP-streamed audio
-                // (the Remote Sync / iPhone path -- local blob: URLs from
-                // the desktop folder-connect path don't hit this),
-                // audio.duration can report Infinity even though the
-                // server sends a real total size, because the container's
-                // own duration metadata isn't always trustworthy over a
-                // ranged stream. (currentTime / Infinity) * 100 always
-                // evaluates to 0, so the bar was getting explicitly pinned
-                // to 0 every tick -- not just failing to update, actively
-                // overwriting any progress. effectiveAudioDuration() falls
-                // back to audio.seekable's real end time (derived from the
-                // server-confirmed total byte size via Content-Range, not
-                // the container's own possibly-untrustworthy duration
-                // field) whenever audio.duration itself isn't a usable
-                // finite number.
-                if (!duration) return;
-                if (!bar.matches(':active')) bar.value = (audio.currentTime / duration) * 100 || 0;
-                timeLabel.innerText = `${formatPlayerTime(audio.currentTime)} / ${formatPlayerTime(duration)}`;
             });
         }
 
@@ -3220,14 +3120,21 @@ async function autoSaveToMacDirectory() {
          API. Requires "Folder Connected" (desktop Chrome/Edge on macOS) —
          there is no file storage on the hosted GitHub Pages side. -->
     <div id="miniPlayerBar" class="hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-md border-t border-slate-700/60 shadow-2xl">
-        <input type="range" id="miniPlayerSeek" min="0" max="100" value="0" oninput="seekMiniPlayer(this.value)" aria-label="Seek" class="w-full h-1 accent-indigo-500 cursor-pointer block">
-        <div class="px-3 py-2 flex items-center gap-3 relative">
-            <img id="miniPlayerCover" src="" alt="" class="w-10 h-10 rounded-md object-cover flex-shrink-0 bg-slate-950">
+        <!-- The seek bar + elapsed/total time display that used to live here
+             were removed (August 2026): audio.duration never resolved to a
+             usable finite number for FLAC streamed from the Remote Sync
+             server on iPhone Safari, even after two different workaround
+             attempts (audio.seekable fallback, then forcing duration
+             resolution via a seek-past-end trick) -- so the bar just sat
+             frozen at 0 and the time stayed 0:00/0:00 the entire time a
+             song played, which is worse than not showing them at all.
+             Playback itself (play/pause/next/prev) is unaffected. -->
+        <div class="px-3 py-2.5 flex items-center gap-3 relative">
+            <img id="miniPlayerCover" src="" alt="" class="w-11 h-11 rounded-md object-cover flex-shrink-0 bg-slate-950">
             <div class="min-w-0 flex-grow">
-                <p id="miniPlayerTrackName" class="text-xs font-bold text-slate-100 truncate"></p>
-                <p id="miniPlayerAlbumInfo" class="text-[10px] text-slate-400 truncate"></p>
+                <p id="miniPlayerTrackName" class="text-sm font-bold text-white truncate"></p>
+                <p id="miniPlayerAlbumInfo" class="text-xs text-slate-400 truncate"></p>
             </div>
-            <span id="miniPlayerTime" class="text-[10px] text-slate-500 flex-shrink-0">0:00 / 0:00</span>
             <div class="flex items-center gap-2 flex-shrink-0">
                 <button onclick="miniPlayerPrev()" aria-label="Previous track" class="w-11 h-11 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 text-lg flex items-center justify-center">⏮</button>
                 <button id="miniPlayerPlayPauseBtn" onclick="toggleMiniPlayerPlayPause()" aria-label="Play or pause" class="w-12 h-12 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-xl flex items-center justify-center">▶</button>
