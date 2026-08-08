@@ -1871,21 +1871,23 @@
 
             if (track.url) {
                 // Remote track (streamed from the Mac's Remote Sync
-                // server). A prior attempt at this fixed the frozen
-                // progress bar by fully downloading the track via fetch()
-                // into a Blob before playing it, same as the local-handle
-                // path below -- but that broke playback outright on
-                // iPhone: awaiting a fetch() before calling audio.play()
-                // pushes .play() outside the original tap's user-gesture
-                // window, and iOS Safari's autoplay policy then rejects it
-                // with NotAllowedError ("the user denied permission") even
-                // though no one actually denied anything. A working
-                // progress bar isn't worth trading for playback that
-                // doesn't work at all, so this reverts to streaming the
-                // URL directly -- audio.play() stays synchronous with the
-                // tap. See setupMiniPlayerEvents' durationchange handler
-                // for the separate, non-blocking fix for the progress bar
-                // itself (the actual Infinity-duration issue this caused).
+                // server). Downloading it fully via fetch() before playing
+                // (like the local-handle path below) broke playback
+                // outright on iPhone in an earlier attempt: awaiting a
+                // fetch() before calling audio.play() pushes .play()
+                // outside the original tap's user-gesture window, and iOS
+                // Safari's autoplay policy rejects that. So this starts
+                // playback by streaming the URL directly instead --
+                // audio.play() below stays synchronous with the tap --
+                // and separately kicks off a background download to
+                // upgrade to a Blob once playback has already started (see
+                // upgradeStreamedTrackToBlob below), which is what
+                // actually fixes end-of-track detection: audio.duration/
+                // seekable/'ended' were all unreliable for streamed FLAC
+                // on iPhone Safari specifically, which is why playback was
+                // just stopping after one track instead of auto-advancing
+                // -- blob: playback has never had that problem, same as
+                // the local-handle path.
                 if (musicPlayerObjectUrl) { URL.revokeObjectURL(musicPlayerObjectUrl); musicPlayerObjectUrl = null; }
                 audio.src = track.url;
             } else {
@@ -1918,6 +1920,54 @@
             document.getElementById('miniPlayerCover').src = musicPlayerItem ? musicPlayerItem.image : '';
             document.getElementById('miniPlayerBar').classList.remove('hidden');
             updateMiniPlayerPlayPauseIcon();
+
+            if (track.url) upgradeStreamedTrackToBlob(track, index);
+        }
+
+        // Runs in the background after a remote track has already started
+        // streaming and passed the tap-gesture check in loadAndPlayTrack --
+        // downloads the same track as a Blob and hot-swaps to it once
+        // ready, preserving the current playback position. This is what
+        // fixes end-of-track (and duration/seeking) reliability for
+        // streamed FLAC on iPhone Safari, without risking the original
+        // play() call the way downloading before that first play() did.
+        async function upgradeStreamedTrackToBlob(track, expectedIndex) {
+            const audio = document.getElementById('miniPlayerAudio');
+            try {
+                const res = await fetch(track.url);
+                if (!res.ok) return;
+                const rawFile = await res.blob();
+                // The user may have already moved on to a different track
+                // by the time this resolves -- swapping in a stale blob
+                // for the wrong track would be worse than doing nothing.
+                if (musicPlayerIndex !== expectedIndex) return;
+
+                const mimeType = mimeTypeForAudioFile(track.name);
+                const file = mimeType ? new Blob([rawFile], { type: mimeType }) : rawFile;
+                const wasPlaying = !audio.paused;
+                const resumeAt = audio.currentTime;
+                const newUrl = URL.createObjectURL(file);
+                audio.src = newUrl;
+                audio.currentTime = resumeAt;
+                if (musicPlayerObjectUrl) URL.revokeObjectURL(musicPlayerObjectUrl);
+                musicPlayerObjectUrl = newUrl;
+
+                if (wasPlaying) {
+                    audio.play().catch(err => {
+                        // The stream was already playing successfully
+                        // before this swap, so if resuming after the swap
+                        // gets rejected, leaving it paused (needing one
+                        // manual tap to continue) is a smaller problem
+                        // than either the swap failing outright or the
+                        // original streaming approach's broken auto-
+                        // advance -- logged, not alerted, since this is a
+                        // background upgrade, not a user-initiated action.
+                        console.log('Could not auto-resume after upgrading to a downloaded blob.', err);
+                    });
+                }
+            } catch (e) {
+                console.log('Background blob upgrade failed (streaming playback continues as-is):', track.name, e);
+            }
         }
 
         function miniPlayerNext() {
