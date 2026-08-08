@@ -2198,6 +2198,41 @@
             return 0;
         }
 
+        // Standard workaround for a well-documented browser quirk: streamed
+        // audio can fail to report a usable duration (Infinity, or just
+        // stuck at NaN and never resolving) even though the server sends a
+        // real, finite total size -- confirmed happening on iPhone for FLAC
+        // streamed from the Remote Sync server, badly enough that even
+        // audio.seekable (effectiveAudioDuration()'s fallback) never
+        // populated either. Seeking far past the end forces the browser to
+        // resolve the real duration from the server's Content-Range
+        // response, which carries the true total size regardless of what
+        // the container's own duration metadata says; resuming at the
+        // original position afterward makes this invisible. Called from
+        // both 'durationchange' (the textbook trigger point) and every
+        // 'timeupdate' tick (belt and suspenders -- durationchange isn't
+        // guaranteed to fire at all for a stream whose duration never
+        // becomes known the normal way, but timeupdate reliably does fire
+        // throughout playback, confirmed since audio was audibly playing).
+        // Guarded by miniPlayerDurationFixInFlight so it can only run once
+        // per track and can't turn into a seek loop -- if it still doesn't
+        // resolve to a finite duration, effectiveAudioDuration() just keeps
+        // returning 0 and the bar stays where it was, same as before this
+        // existed, rather than breaking anything. Never touches audio.src
+        // or calls play(), so it can't affect the tap-gesture/autoplay
+        // requirement the way the reverted fetch-then-blob attempt did.
+        function attemptDurationFix(audio) {
+            if (Number.isFinite(audio.duration) || miniPlayerDurationFixInFlight) return;
+            miniPlayerDurationFixInFlight = true;
+            const resumeAt = audio.currentTime;
+            audio.currentTime = 1e101;
+            audio.addEventListener('seeked', function onSeeked() {
+                audio.removeEventListener('seeked', onSeeked);
+                audio.currentTime = resumeAt;
+                miniPlayerDurationFixInFlight = false;
+            }, { once: true });
+        }
+
         function seekMiniPlayer(value) {
             const audio = document.getElementById('miniPlayerAudio');
             const duration = effectiveAudioDuration(audio);
@@ -2209,34 +2244,7 @@
             audio.addEventListener('ended', miniPlayerNext);
             audio.addEventListener('play', updateMiniPlayerPlayPauseIcon);
             audio.addEventListener('pause', updateMiniPlayerPlayPauseIcon);
-            audio.addEventListener('durationchange', () => {
-                // Standard workaround for a well-documented browser quirk:
-                // streamed audio can report duration as Infinity even
-                // though the server sends a real, finite total size --
-                // confirmed happening on iPhone for FLAC streamed from the
-                // Remote Sync server (effectiveAudioDuration()'s
-                // audio.seekable fallback also came back empty here, so
-                // that alone wasn't enough). Seeking far past the end
-                // forces the browser to resolve the real duration from the
-                // server's Content-Range response, which does carry the
-                // true total size regardless of what the container's own
-                // duration metadata says; resuming at the original position
-                // afterward makes this invisible to the listener. Guarded
-                // by miniPlayerDurationFixInFlight so it can only run once
-                // per track and can't turn into a seek loop -- if it
-                // doesn't resolve to a finite duration, effectiveAudioDuration()
-                // just keeps returning 0 and the bar stays where it was,
-                // same as before this existed, rather than breaking anything.
-                if (audio.duration !== Infinity || miniPlayerDurationFixInFlight) return;
-                miniPlayerDurationFixInFlight = true;
-                const resumeAt = audio.currentTime;
-                audio.currentTime = 1e101;
-                audio.addEventListener('seeked', function onSeeked() {
-                    audio.removeEventListener('seeked', onSeeked);
-                    audio.currentTime = resumeAt;
-                    miniPlayerDurationFixInFlight = false;
-                }, { once: true });
-            });
+            audio.addEventListener('durationchange', () => attemptDurationFix(audio));
             audio.addEventListener('error', () => {
                 // Without this, a decode/format failure leaves the UI
                 // looking like it's playing (paused flips to false as
@@ -2254,6 +2262,7 @@
                 const bar = document.getElementById('miniPlayerSeek');
                 const timeLabel = document.getElementById('miniPlayerTime');
                 if (!bar) return;
+                attemptDurationFix(audio);
                 const duration = effectiveAudioDuration(audio);
                 // Real bug, not just an edge case: for HTTP-streamed audio
                 // (the Remote Sync / iPhone path -- local blob: URLs from
