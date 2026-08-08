@@ -1573,46 +1573,79 @@
 
         const AUDIO_FILE_EXTENSIONS = ['.flac', '.mp3', '.m4a', '.wav', '.aac', '.ogg'];
 
-        function sanitizeForFolderMatch(name) {
-            // Mirrors the `!`/`:` stripping Vaultkeeper's own rip-time
-            // sanitizer applies (see MEDIA_STYLE_GUIDE.md), so a folder
-            // name that's diverged slightly from the catalog title (or a
-            // title fixed by hand after a wrong-candidate match) can still
-            // be found instead of failing outright.
-            return (name || '').toLowerCase().replace(/[!:]/g, '').replace(/\s+/g, ' ').trim();
-        }
-
-        async function findChildDirectoryByName(parentHandle, targetName) {
-            try {
-                return await parentHandle.getDirectoryHandle(targetName, { create: false });
-            } catch (e) {
-                // Fall through to a fuzzy scan below.
-            }
-            const target = sanitizeForFolderMatch(targetName);
-            try {
-                for await (const [name, handle] of parentHandle.entries()) {
-                    if (handle.kind === 'directory' && sanitizeForFolderMatch(name) === target) return handle;
-                }
-            } catch (e) {}
-            return null;
-        }
-
         function naturalCompareFilenames(a, b) {
             // So "2 - Song.flac" sorts before "10 - Song.flac" — a plain
             // string sort would put "10" first and scramble track order.
             return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
         }
 
-        async function resolveAlbumDirectoryHandle(item) {
-            if (!localDirectoryHandle) return null;
+        // Folder-matching logic below is a deliberate port of
+        // find_folders_for_entry() / find_folder_for_disc() / _loose() in
+        // audit_media_vault_music.py — checked directly against the real
+        // catalog (80 music entries): a naive creator/title lookup (even
+        // with `!`/`:` stripped) only resolved 29 of them, because on-disk
+        // folder names have drifted from catalog titles in exactly the
+        // ways that Python audit already knows how to handle — multi-disc
+        // CD1/CD2 splits, "(Remastered)"/"(Deluxe Edition)" qualifiers the
+        // folder never had, "&" vs "and", dropped "The", legacy
+        // underscore/apostrophe naming. Porting the same algorithm
+        // resolves 65 of 80; the other 15 have no discFingerprint or
+        // sourceDiscName at all, meaning (per this project's own
+        // established convention) they were never actually ripped from a
+        // disc — there is no file to find, and that's correct, not a bug.
+        // If find_folders_for_entry ever changes on the Python side, port
+        // the change here too — same "keep two implementations in sync"
+        // caution this project already applies to the tracklist-overlap
+        // checks.
+
+        function looseMatch(text) {
+            return (text || '')
+                .replace(/_/g, ' ')
+                .toLowerCase()
+                .replace(/[^\w\s]/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        async function findFolderForDisc(musicDirHandle, discName) {
+            // discName is like "Various Artists - Now That's What I Call X".
+            // Reconstructs "Artist - Album" from every real folder pair on
+            // disk and compares loosely, rather than splitting discName
+            // itself (breaks on album titles that themselves contain " - ").
+            const target = looseMatch(discName);
             try {
-                const musicDir = await localDirectoryHandle.getDirectoryHandle('Music', { create: false });
-                const artistDir = await findChildDirectoryByName(musicDir, item.creator);
-                if (!artistDir) return null;
-                return await findChildDirectoryByName(artistDir, item.title);
-            } catch (e) {
-                return null;
+                for await (const [artistName, artistHandle] of musicDirHandle.entries()) {
+                    if (artistHandle.kind !== 'directory') continue;
+                    for await (const [albumName, albumHandle] of artistHandle.entries()) {
+                        if (albumHandle.kind !== 'directory') continue;
+                        if (looseMatch(`${artistName} - ${albumName}`) === target) return albumHandle;
+                    }
+                }
+            } catch (e) {}
+            return null;
+        }
+
+        async function findAlbumFolderHandles(item, musicDirHandle) {
+            // Returns album directory handles backing this entry, in
+            // sourceDiscName's disc order — more than one for a combined
+            // multi-disc entry.
+            const sourceDiscName = item.sourceDiscName || '';
+            if (sourceDiscName) {
+                const whole = await findFolderForDisc(musicDirHandle, sourceDiscName);
+                if (whole) return [whole];
+
+                const discNames = sourceDiscName.split('|').map(s => s.trim()).filter(Boolean);
+                const folders = [];
+                for (const dn of discNames) {
+                    const f = await findFolderForDisc(musicDirHandle, dn);
+                    if (f) folders.push(f);
+                }
+                if (folders.length > 0) return folders;
+                // Falls through to the plain creator/title guess below if
+                // none of the split segments resolved either.
             }
+            const direct = await findFolderForDisc(musicDirHandle, `${item.creator} - ${item.title}`);
+            return direct ? [direct] : [];
         }
 
         async function collectAudioTrackHandles(albumDirHandle) {
@@ -1641,15 +1674,25 @@
             if (playBtn) playBtn.innerText = '⏳ Loading...';
 
             try {
-                let albumDir = await resolveAlbumDirectoryHandle(item);
-                if (!albumDir) {
-                    const wantsManual = confirm(`Couldn't find a matching folder for "${item.title}" under Music/${item.creator}/. Pick the album folder manually?`);
-                    if (!wantsManual) return;
-                    albumDir = await window.showDirectoryPicker({ mode: 'read', startIn: localDirectoryHandle }).catch(() => null);
-                    if (!albumDir) return;
+                const musicDir = await localDirectoryHandle.getDirectoryHandle('Music', { create: false }).catch(() => null);
+                if (!musicDir) {
+                    alert('No "Music" folder found in the connected directory.');
+                    return;
                 }
 
-                const tracks = await collectAudioTrackHandles(albumDir);
+                let albumDirs = await findAlbumFolderHandles(item, musicDir);
+                if (albumDirs.length === 0) {
+                    const wantsManual = confirm(`Couldn't find ripped files for "${item.title}" by ${item.creator}. This can mean it was catalogued without actually being ripped from a disc. Pick the album folder manually instead?`);
+                    if (!wantsManual) return;
+                    const manualDir = await window.showDirectoryPicker({ mode: 'read', startIn: localDirectoryHandle }).catch(() => null);
+                    if (!manualDir) return;
+                    albumDirs = [manualDir];
+                }
+
+                let tracks = [];
+                for (const dir of albumDirs) {
+                    tracks = tracks.concat(await collectAudioTrackHandles(dir));
+                }
                 if (tracks.length === 0) {
                     alert(`No audio files found in that folder for "${item.title}".`);
                     return;
