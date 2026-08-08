@@ -1868,6 +1868,7 @@
             musicPlayerIndex = index;
             const track = musicPlayerTracks[index];
             const audio = document.getElementById('miniPlayerAudio');
+            mvLog('loadAndPlayTrack: index', index, 'of', musicPlayerTracks.length, 'name', track.name, 'isRemote', !!track.url);
 
             if (track.url) {
                 // Remote track (streamed from the Mac's Remote Sync
@@ -1957,16 +1958,28 @@
         // fixes end-of-track (and duration/seeking) reliability for
         // streamed FLAC on iPhone Safari, without risking the original
         // play() call the way downloading before that first play() did.
+        // TEMPORARY diagnostic logging (August 2026) while tracking down why
+        // auto-advance to the next track isn't happening on iPhone -- traces
+        // the whole lifecycle of a track load through to the 'ended' event.
+        // Safe to remove once that's resolved and confirmed fixed.
+        function mvLog(...args) { console.log('[MediaVault]', ...args); }
+
         async function upgradeStreamedTrackToBlob(track, expectedIndex) {
             const audio = document.getElementById('miniPlayerAudio');
+            mvLog('upgradeStreamedTrackToBlob: starting background download for', track.name, 'expectedIndex', expectedIndex);
             try {
                 const res = await fetch(track.url);
+                mvLog('upgradeStreamedTrackToBlob: fetch responded', res.status, 'for', track.name);
                 if (!res.ok) return;
                 const rawFile = await res.blob();
+                mvLog('upgradeStreamedTrackToBlob: blob downloaded, size', rawFile.size, 'for', track.name);
                 // The user may have already moved on to a different track
                 // by the time this resolves -- swapping in a stale blob
                 // for the wrong track would be worse than doing nothing.
-                if (musicPlayerIndex !== expectedIndex) return;
+                if (musicPlayerIndex !== expectedIndex) {
+                    mvLog('upgradeStreamedTrackToBlob: track changed while downloading (now', musicPlayerIndex, 'expected', expectedIndex, ') -- skipping swap');
+                    return;
+                }
 
                 const mimeType = mimeTypeForAudioFile(track.name);
                 const file = mimeType ? new Blob([rawFile], { type: mimeType }) : rawFile;
@@ -1977,9 +1990,12 @@
                 audio.currentTime = resumeAt;
                 if (musicPlayerObjectUrl) URL.revokeObjectURL(musicPlayerObjectUrl);
                 musicPlayerObjectUrl = newUrl;
+                mvLog('upgradeStreamedTrackToBlob: swapped to blob for', track.name, 'wasPlaying', wasPlaying, 'resumeAt', resumeAt, 'new duration', audio.duration);
 
                 if (wasPlaying) {
-                    audio.play().catch(err => {
+                    audio.play().then(() => {
+                        mvLog('upgradeStreamedTrackToBlob: resumed playback after swap for', track.name);
+                    }).catch(err => {
                         // The stream was already playing successfully
                         // before this swap, so if resuming after the swap
                         // gets rejected, leaving it paused (needing one
@@ -1992,11 +2008,12 @@
                     });
                 }
             } catch (e) {
-                console.log('Background blob upgrade failed (streaming playback continues as-is):', track.name, e);
+                mvLog('upgradeStreamedTrackToBlob: FAILED for', track.name, e);
             }
         }
 
         function miniPlayerNext() {
+            mvLog('miniPlayerNext: called. musicPlayerIndex', musicPlayerIndex, 'of', musicPlayerTracks.length, 'tracks; queueIndex', musicAlbumQueueIndex, 'of', musicAlbumQueue.length, 'albums');
             if (musicPlayerIndex + 1 < musicPlayerTracks.length) {
                 loadAndPlayTrack(musicPlayerIndex + 1);
                 return;
@@ -2008,6 +2025,8 @@
             // before album queuing existed.
             if (musicAlbumQueueIndex + 1 < musicAlbumQueue.length) {
                 playAlbumQueue(musicAlbumQueue, musicAlbumQueueIndex + 1);
+            } else {
+                mvLog('miniPlayerNext: nothing left to advance to (end of album queue)');
             }
         }
 
@@ -2250,15 +2269,25 @@
 
         function setupMiniPlayerEvents() {
             const audio = document.getElementById('miniPlayerAudio');
-            audio.addEventListener('ended', miniPlayerNext);
+            audio.addEventListener('ended', () => {
+                mvLog('ended event fired! musicPlayerIndex', musicPlayerIndex, 'audio.currentTime', audio.currentTime, 'audio.duration', audio.duration, 'audio.src', audio.src);
+                miniPlayerNext();
+            });
             audio.addEventListener('play', () => {
+                mvLog('play event fired. audio.src', audio.src, 'audio.currentTime', audio.currentTime);
                 updateMiniPlayerPlayPauseIcon();
                 if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
             });
             audio.addEventListener('pause', () => {
+                mvLog('pause event fired. audio.currentTime', audio.currentTime, 'audio.duration', audio.duration, 'audio.ended', audio.ended);
                 updateMiniPlayerPlayPauseIcon();
                 if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
             });
+            audio.addEventListener('stalled', () => mvLog('stalled event fired. audio.currentTime', audio.currentTime));
+            audio.addEventListener('suspend', () => mvLog('suspend event fired. audio.currentTime', audio.currentTime));
+            audio.addEventListener('abort', () => mvLog('abort event fired. audio.currentTime', audio.currentTime));
+            audio.addEventListener('emptied', () => mvLog('emptied event fired.'));
+            audio.addEventListener('waiting', () => mvLog('waiting event fired. audio.currentTime', audio.currentTime));
             audio.addEventListener('error', () => {
                 // Without this, a decode/format failure leaves the UI
                 // looking like it's playing (paused flips to false as
@@ -2268,7 +2297,7 @@
                 const err = audio.error;
                 const reasons = { 1: 'aborted', 2: 'network error', 3: "couldn't decode this file", 4: 'format not supported by this browser' };
                 const reason = err ? (reasons[err.code] || `error code ${err.code}`) : 'unknown error';
-                console.log('Audio element error:', err);
+                mvLog('error event fired.', err, 'reason:', reason, 'audio.src', audio.src);
                 const trackLabel = document.getElementById('miniPlayerTrackName').innerText || 'this track';
                 alert(`Playback stopped for "${trackLabel}": ${reason}.`);
             });
