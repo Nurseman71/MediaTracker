@@ -173,6 +173,12 @@
                     <button onclick="closeMoreMenu(); openDuplicatesModal()" class="w-full md:w-auto bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
                         🔍 Duplicates
                     </button>
+                    <button onclick="closeMoreMenu(); shuffleAllMusic()" class="w-full md:w-auto bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
+                        🔀 Shuffle All Music
+                    </button>
+                    <button onclick="closeMoreMenu(); openPlaylistsModal()" class="w-full md:w-auto bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
+                        🎵 Playlists
+                    </button>
                     <button onclick="closeMoreMenu(); exportToCsv()" class="w-full md:w-auto bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
                         📄 CSV
                     </button>
@@ -588,6 +594,34 @@
         </div>
     </div>
 
+    <!-- MODAL 8: Saved Playlists -->
+    <div id="playlistsModal" class="fixed inset-0 bg-slate-950/80 hidden z-50 flex items-center justify-center p-4 backdrop-blur-md" onclick="closeModal(event)">
+        <div class="bg-slate-900 border border-slate-700/60 rounded-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto shadow-2xl relative" onclick="event.stopPropagation()">
+            <button onclick="toggleModal('playlistsModal', false)" aria-label="Close playlists" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg font-bold bg-slate-800 w-11 h-11 rounded-full flex items-center justify-center border border-slate-700">&times;</button>
+            <div class="p-5">
+                <h3 class="text-base font-black text-white mb-1">Playlists</h3>
+                <p class="text-xs text-slate-400 mb-4">Genre-matched sets saved from the mini player's ⋮ menu while something's playing.</p>
+                <div id="playlistsContent" class="flex flex-col gap-2"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 9: Create Playlist (from currently playing song) -->
+    <div id="createPlaylistModal" class="fixed inset-0 bg-slate-950/80 hidden z-50 flex items-center justify-center p-4 backdrop-blur-md" onclick="closeModal(event)">
+        <div class="bg-slate-900 border border-slate-700/60 rounded-2xl max-w-md w-full shadow-2xl relative" onclick="event.stopPropagation()">
+            <button onclick="toggleModal('createPlaylistModal', false)" aria-label="Cancel create playlist" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg font-bold bg-slate-800 w-11 h-11 rounded-full flex items-center justify-center border border-slate-700">&times;</button>
+            <div class="p-5">
+                <h3 class="text-base font-black text-white mb-1">Save as Playlist</h3>
+                <p id="createPlaylistPreview" class="text-xs text-slate-400 mb-4"></p>
+                <label class="text-xs text-slate-400 font-bold uppercase tracking-wider">Playlist Name</label>
+                <input id="createPlaylistName" type="text" class="mt-1 w-full bg-slate-800 border border-slate-700 text-sm rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                <button onclick="confirmCreatePlaylist()" class="mt-4 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
+                    ➕ Create Playlist
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- UNDO NOTIFICATION TOAST BAR -->
     <div id="undoToast" class="fixed bottom-4 left-4 right-4 bg-slate-900/95 border border-slate-700/60 shadow-2xl rounded-xl p-3 flex items-center justify-between z-50 transition-all duration-300 translate-y-24 opacity-0 pointer-events-none max-w-sm mx-auto backdrop-blur-md">
         <div class="flex items-center gap-2 text-xs text-slate-200">
@@ -742,6 +776,15 @@
         let musicPlayerObjectUrl = null;
         let isAwaitingReauthorization = false;
         let remoteSyncInFlight = false;
+        // The album currently loaded into musicPlayerTracks is always
+        // musicAlbumQueue[musicAlbumQueueIndex] -- a plain "▶ Play" on one
+        // album is just a one-item queue. Shuffle All / Play More Like
+        // This / a saved playlist populate a longer queue instead, and
+        // miniPlayerNext() advances into it once the current album's own
+        // tracks run out, so playback crosses album boundaries without
+        // fetching every album's tracklist up front.
+        let musicAlbumQueue = [];
+        let musicAlbumQueueIndex = -1;
 
         // Escapes untrusted text before it's inserted via innerHTML (titles/artists/etc.
         // come from external APIs and manual entry, so treat them as untrusted).
@@ -785,13 +828,14 @@
         // Lets Escape close whichever modal is currently open (accessibility / UX nicety).
         document.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
-            ['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal', 'loanModal', 'statsModal', 'duplicatesModal'].forEach(id => {
+            ['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal', 'loanModal', 'statsModal', 'duplicatesModal', 'playlistsModal', 'createPlaylistModal'].forEach(id => {
                 const modal = document.getElementById(id);
                 if (modal && !modal.classList.contains('hidden')) toggleModal(id, false);
             });
             const scanner = document.getElementById('barcodeScannerModal');
             if (scanner && !scanner.classList.contains('hidden')) stopBarcodeScanner();
             closeMoreMenu();
+            closeMiniPlayerMenu();
         });
 
         // --- MOBILE HEADER "MORE" MENU ---
@@ -1670,8 +1714,32 @@
             if (event) event.stopPropagation();
             const item = collection.find(i => i.id === itemId);
             if (!item || item.type !== 'music') return;
+            // A plain "▶ Play" tap is just a one-album queue -- see
+            // musicAlbumQueue's declaration for why this goes through the
+            // same queue mechanism as Shuffle All / More Like This /
+            // playlists rather than being a separate code path.
+            await playAlbumQueue([item], 0);
+        }
 
-            const playBtn = document.getElementById(`playBtn-${itemId}`);
+        // Shared entry point for anything that plays a music item, whether
+        // it's a single album (queue of one) or a longer queue (Shuffle
+        // All, Play More Like This, a saved playlist). Loads
+        // queue[startIndex] and leaves the rest of the queue in place for
+        // miniPlayerNext() to advance into as each album's tracks finish.
+        async function playAlbumQueue(items, startIndex) {
+            if (!items || items.length === 0 || startIndex < 0 || startIndex >= items.length) return;
+            musicAlbumQueue = items;
+            musicAlbumQueueIndex = startIndex;
+            const item = musicAlbumQueue[musicAlbumQueueIndex];
+
+            // Only a single-album play (queue of one, triggered from that
+            // album's own card) has a matching playBtn-<id> element to show
+            // loading state on -- a multi-album queue has no one button to
+            // represent "loading track 1 of album 3 of 12", so playBtn is
+            // simply absent there and every "if (playBtn)" guard already in
+            // playAlbumFromLocalFolder/playAlbumFromRemoteServer no-ops
+            // cleanly.
+            const playBtn = (musicAlbumQueue.length === 1) ? document.getElementById(`playBtn-${item.id}`) : null;
             const originalBtnText = playBtn ? playBtn.innerText : null;
 
             // Desktop with a connected folder plays local files directly —
@@ -1843,7 +1911,18 @@
         }
 
         function miniPlayerNext() {
-            if (musicPlayerIndex + 1 < musicPlayerTracks.length) loadAndPlayTrack(musicPlayerIndex + 1);
+            if (musicPlayerIndex + 1 < musicPlayerTracks.length) {
+                loadAndPlayTrack(musicPlayerIndex + 1);
+                return;
+            }
+            // Current album's tracks are exhausted -- advance into the next
+            // album in the queue, if there is one (Shuffle All / Play More
+            // Like This / a saved playlist). A single-album play is just a
+            // one-item queue, so this is a no-op there, same behavior as
+            // before album queuing existed.
+            if (musicAlbumQueueIndex + 1 < musicAlbumQueue.length) {
+                playAlbumQueue(musicAlbumQueue, musicAlbumQueueIndex + 1);
+            }
         }
 
         function miniPlayerPrev() {
@@ -1856,6 +1935,16 @@
         function toggleMiniPlayerPlayPause() {
             const audio = document.getElementById('miniPlayerAudio');
             if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+            // Update the icon immediately rather than relying solely on the
+            // audio element's own 'play'/'pause' events -- confirmed real
+            // bug on iPhone Safari where the mini player's button stayed
+            // stuck showing the pause icon regardless of actual playback
+            // state. audio.paused is set synchronously by both play() and
+            // pause() per spec, so this is safe to read right away. The
+            // event listeners (setupMiniPlayerEvents) stay in place too, so
+            // the icon still updates correctly for state changes that don't
+            // go through this button (e.g. a track ending).
+            updateMiniPlayerPlayPauseIcon();
         }
 
         function updateMiniPlayerPlayPauseIcon() {
@@ -1870,8 +1959,201 @@
             audio.src = '';
             if (musicPlayerObjectUrl) { URL.revokeObjectURL(musicPlayerObjectUrl); musicPlayerObjectUrl = null; }
             musicPlayerTracks = []; musicPlayerIndex = -1; musicPlayerItem = null;
+            musicAlbumQueue = []; musicAlbumQueueIndex = -1;
             document.getElementById('miniPlayerBar').classList.add('hidden');
+            closeMiniPlayerMenu();
         }
+
+        // --- SHUFFLE / SIMILARITY / PLAYLISTS ---
+        // All three features below are deliberately zero-setup: they only
+        // ever use item.genres, which is metadata the app already collects
+        // at rip/add time (iTunes' primaryGenreName, or a manual entry) --
+        // no external API, no key to configure, works offline.
+
+        function shuffleArray(arr) {
+            const a = arr.slice();
+            for (let i = a.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [a[i], a[j]] = [a[j], a[i]];
+            }
+            return a;
+        }
+
+        function shuffleAllMusic() {
+            const allMusic = collection.filter(item => item.type === 'music' && !item.wishlist);
+            if (allMusic.length === 0) {
+                alert('No music in your vault yet to shuffle.');
+                return;
+            }
+            playAlbumQueue(shuffleArray(allMusic), 0);
+        }
+
+        // Genre-overlap matching -- shares at least one genre tag with
+        // `item`, same idea as the existing genre filter dropdown already
+        // uses elsewhere in the app, just applied item-to-item instead of
+        // item-to-selected-filter.
+        function findSimilarMusic(item) {
+            const genres = new Set((item.genres || []).map(g => g.toLowerCase()));
+            if (genres.size === 0) return [];
+            return collection.filter(other =>
+                other.type === 'music' && !other.wishlist && other.id !== item.id &&
+                (other.genres || []).some(g => genres.has(g.toLowerCase()))
+            );
+        }
+
+        function playMoreLikeThis() {
+            if (!musicPlayerItem) {
+                alert('Play something first, then use "More Like This" to queue similar music.');
+                return;
+            }
+            const similar = findSimilarMusic(musicPlayerItem);
+            if (similar.length === 0) {
+                const genreList = (musicPlayerItem.genres || []).join(', ') || 'no genre tagged';
+                alert(`Nothing else in your vault shares a genre with "${musicPlayerItem.title}" (${genreList}).`);
+                return;
+            }
+            playAlbumQueue(shuffleArray(similar), 0);
+            closeMiniPlayerMenu();
+        }
+
+        // --- Saved playlists (localStorage-backed) ---
+        // A playlist stores item ids, not full item snapshots, so it stays
+        // current if an item's own metadata is edited later -- resolved
+        // back to real items at play/render time, silently dropping any id
+        // that no longer exists in the collection (deleted since).
+        function getPlaylists() {
+            try {
+                const raw = localStorage.getItem('mediaVaultPlaylists');
+                const parsed = raw ? JSON.parse(raw) : [];
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (err) {
+                console.error('Could not read saved playlists:', err);
+                return [];
+            }
+        }
+
+        function savePlaylists(playlists) {
+            return safeSetLocalStorage('mediaVaultPlaylists', JSON.stringify(playlists));
+        }
+
+        function resolvePlaylistItems(playlist) {
+            return (playlist.trackItemIds || [])
+                .map(id => collection.find(i => i.type === 'music' && i.id === id))
+                .filter(Boolean);
+        }
+
+        function openCreatePlaylistModal() {
+            if (!musicPlayerItem) {
+                alert('Play something first, then create a playlist based on that song.');
+                return;
+            }
+            const similar = findSimilarMusic(musicPlayerItem);
+            if (similar.length === 0) {
+                const genreList = (musicPlayerItem.genres || []).join(', ') || 'no genre tagged';
+                alert(`Nothing else in your vault shares a genre with "${musicPlayerItem.title}" (${genreList}) to build a playlist from.`);
+                return;
+            }
+            const genreLabel = (musicPlayerItem.genres || [])[0] || 'Similar';
+            document.getElementById('createPlaylistName').value = `${genreLabel} like ${musicPlayerItem.title}`;
+            document.getElementById('createPlaylistPreview').innerText =
+                `${similar.length + 1} track${similar.length + 1 === 1 ? '' : 's'} (${musicPlayerItem.title} + ${similar.length} similar)`;
+            toggleModal('createPlaylistModal', true);
+            closeMiniPlayerMenu();
+        }
+
+        function confirmCreatePlaylist() {
+            const name = document.getElementById('createPlaylistName').value.trim();
+            if (!name) {
+                alert('Give the playlist a name first.');
+                return;
+            }
+            if (!musicPlayerItem) {
+                toggleModal('createPlaylistModal', false);
+                return;
+            }
+            const similar = findSimilarMusic(musicPlayerItem);
+            const playlist = {
+                id: `pl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                name,
+                trackItemIds: [musicPlayerItem.id, ...similar.map(i => i.id)],
+                createdAt: Date.now(),
+            };
+            const playlists = getPlaylists();
+            playlists.push(playlist);
+            savePlaylists(playlists);
+            toggleModal('createPlaylistModal', false);
+            alert(`Saved playlist "${name}" (${playlist.trackItemIds.length} tracks). Find it under ⋯ More → Playlists.`);
+        }
+
+        function openPlaylistsModal() {
+            renderPlaylistsContent();
+            toggleModal('playlistsModal', true);
+        }
+
+        function renderPlaylistsContent() {
+            const content = document.getElementById('playlistsContent');
+            const playlists = getPlaylists();
+            if (playlists.length === 0) {
+                content.innerHTML = '<p class="text-slate-500 text-sm text-center py-6">No saved playlists yet — while something\'s playing, use the mini player\'s ⋮ menu → "Save as Playlist".</p>';
+                return;
+            }
+            content.innerHTML = playlists.slice().sort((a, b) => b.createdAt - a.createdAt).map(playlist => {
+                const trackCount = (playlist.trackItemIds || []).length;
+                const availableCount = resolvePlaylistItems(playlist).length;
+                const missingNote = availableCount < trackCount
+                    ? ` <span class="text-amber-500">(${trackCount - availableCount} no longer in your vault)</span>`
+                    : '';
+                return `
+                    <div class="flex items-center gap-3 bg-slate-800/60 border border-slate-700/60 rounded-xl px-3 py-2.5">
+                        <div class="min-w-0 flex-grow">
+                            <p class="text-sm font-bold text-slate-100 truncate">${escapeHtml(playlist.name)}</p>
+                            <p class="text-[11px] text-slate-500">${availableCount} track${availableCount === 1 ? '' : 's'}${missingNote}</p>
+                        </div>
+                        <button onclick="playPlaylist('${playlist.id}')" aria-label="Play playlist ${escapeHtml(playlist.name)}" class="w-9 h-9 flex-shrink-0 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center">▶</button>
+                        <button onclick="deletePlaylist('${playlist.id}')" aria-label="Delete playlist ${escapeHtml(playlist.name)}" class="w-9 h-9 flex-shrink-0 rounded-full bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-400 flex items-center justify-center">🗑</button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function playPlaylist(playlistId) {
+            const playlist = getPlaylists().find(p => p.id === playlistId);
+            if (!playlist) return;
+            const items = resolvePlaylistItems(playlist);
+            if (items.length === 0) {
+                alert(`None of the tracks in "${playlist.name}" are still in your vault.`);
+                return;
+            }
+            toggleModal('playlistsModal', false);
+            playAlbumQueue(items, 0);
+        }
+
+        function deletePlaylist(playlistId) {
+            const playlist = getPlaylists().find(p => p.id === playlistId);
+            if (!playlist) return;
+            if (!confirm(`Delete the playlist "${playlist.name}"? This only removes the playlist, not the music itself.`)) return;
+            savePlaylists(getPlaylists().filter(p => p.id !== playlistId));
+            renderPlaylistsContent();
+        }
+
+        // --- Mini player "⋮" menu (More Like This / Save as Playlist) ---
+        let miniPlayerMenuOpen = false;
+        function toggleMiniPlayerMenu(event) {
+            if (event) event.stopPropagation();
+            miniPlayerMenuOpen = !miniPlayerMenuOpen;
+            document.getElementById('miniPlayerMenu').classList.toggle('hidden', !miniPlayerMenuOpen);
+        }
+        function closeMiniPlayerMenu() {
+            miniPlayerMenuOpen = false;
+            const menu = document.getElementById('miniPlayerMenu');
+            if (menu) menu.classList.add('hidden');
+        }
+        document.addEventListener('click', (e) => {
+            if (!miniPlayerMenuOpen) return;
+            const menu = document.getElementById('miniPlayerMenu');
+            const toggleBtn = document.getElementById('miniPlayerMoreBtn');
+            if (menu && !menu.contains(e.target) && toggleBtn && !toggleBtn.contains(e.target)) closeMiniPlayerMenu();
+        });
 
         function formatPlayerTime(seconds) {
             if (!Number.isFinite(seconds)) return '0:00';
@@ -2751,7 +3033,7 @@ async function autoSaveToMacDirectory() {
             else { modal.classList.add('hidden'); document.body.style.overflow = ''; }
         }
 
-        function closeModal(event) { if (['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal', 'loanModal', 'statsModal', 'duplicatesModal'].includes(event.target.id)) toggleModal(event.target.id, false); }
+        function closeModal(event) { if (['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal', 'loanModal', 'statsModal', 'duplicatesModal', 'playlistsModal', 'createPlaylistModal'].includes(event.target.id)) toggleModal(event.target.id, false); }
 
         function renderCollection() {
             updateStatsDashboard(); populateGenreFilterOptions(); populateFormatFilterOptions(); populateConditionFilterOptions();
@@ -2848,7 +3130,7 @@ async function autoSaveToMacDirectory() {
          there is no file storage on the hosted GitHub Pages side. -->
     <div id="miniPlayerBar" class="hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-md border-t border-slate-700/60 shadow-2xl">
         <input type="range" id="miniPlayerSeek" min="0" max="100" value="0" oninput="seekMiniPlayer(this.value)" aria-label="Seek" class="w-full h-1 accent-indigo-500 cursor-pointer block">
-        <div class="px-3 py-2 flex items-center gap-3">
+        <div class="px-3 py-2 flex items-center gap-3 relative">
             <img id="miniPlayerCover" src="" alt="" class="w-10 h-10 rounded-md object-cover flex-shrink-0 bg-slate-950">
             <div class="min-w-0 flex-grow">
                 <p id="miniPlayerTrackName" class="text-xs font-bold text-slate-100 truncate"></p>
@@ -2859,7 +3141,12 @@ async function autoSaveToMacDirectory() {
                 <button onclick="miniPlayerPrev()" aria-label="Previous track" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center">⏮</button>
                 <button id="miniPlayerPlayPauseBtn" onclick="toggleMiniPlayerPlayPause()" aria-label="Play or pause" class="w-9 h-9 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center">▶</button>
                 <button onclick="miniPlayerNext()" aria-label="Next track" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center">⏭</button>
-                <button onclick="closeMiniPlayer()" aria-label="Close player" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 flex items-center justify-center ml-1">&times;</button>
+                <button id="miniPlayerMoreBtn" onclick="toggleMiniPlayerMenu(event)" aria-label="More player actions" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center ml-1">⋮</button>
+                <button onclick="closeMiniPlayer()" aria-label="Close player" class="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 flex items-center justify-center">&times;</button>
+            </div>
+            <div id="miniPlayerMenu" class="hidden absolute bottom-full right-3 mb-2 w-52 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+                <button onclick="playMoreLikeThis()" class="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-slate-700 flex items-center gap-2">🔀 More Like This</button>
+                <button onclick="openCreatePlaylistModal()" class="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-slate-700 flex items-center gap-2 border-t border-slate-700/60">➕ Save as Playlist</button>
             </div>
         </div>
         <audio id="miniPlayerAudio"></audio>
