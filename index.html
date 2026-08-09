@@ -3270,35 +3270,26 @@ async function autoSaveToMacDirectory() {
         runDataMigrationChecks();
         renderCollection();
         loadCachedHandleFromStorage();
-        // NOT setupMiniPlayerEvents() directly here -- this is the actual
-        // root cause of the whole "doesn't auto-advance to the next track"
-        // bug (August 2026), unrelated to the audio.duration/FLAC work
-        // elsewhere in this file. <div id="miniPlayerBar"> (and the
-        // <audio id="miniPlayerAudio"> inside it) is defined further down
-        // in the raw HTML, after this script block's own closing tag -- so
-        // at the moment this line ran, during the browser's initial top-to-bottom
-        // parse, that element didn't exist in the DOM yet.
-        // document.getElementById('miniPlayerAudio') returned null, and the
-        // very first addEventListener call inside setupMiniPlayerEvents()
-        // threw immediately, silently aborting the whole function before a
-        // single listener got attached. Confirmed directly via Web
-        // Inspector: manually re-running setupMiniPlayerEvents() from the
-        // console mid-session (well after full page load) immediately made
-        // every event -- play, pause, ended, timeupdate -- start firing and
-        // logging correctly. Deferring to DOMContentLoaded (or running
-        // immediately if the document has, for whatever reason, already
-        // finished loading by the time this line executes) guarantees the
-        // element exists first.
-        mvLog('mini player setup call site reached. document.readyState =', document.readyState);
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => {
-                mvLog('DOMContentLoaded fired -- calling setupMiniPlayerEvents() now');
-                setupMiniPlayerEvents();
-            });
-        } else {
-            mvLog('readyState was not "loading" at call time -- calling setupMiniPlayerEvents() immediately');
-            setupMiniPlayerEvents();
-        }
+        // NOT setupMiniPlayerEvents() here -- this is the actual root cause
+        // of the whole "doesn't auto-advance to the next track" bug (August
+        // 2026), unrelated to the audio.duration/FLAC work elsewhere in
+        // this file. The mini player bar (and its audio element) is
+        // defined further down in the raw HTML, after this script block's
+        // own closing tag -- so at the moment this line runs, during the
+        // browser's initial top-to-bottom parse, that element doesn't
+        // exist in the DOM yet, and calling setupMiniPlayerEvents() here
+        // silently fails to attach any listeners at all.
+        //
+        // A DOMContentLoaded-deferred call was tried here first and did NOT
+        // fix it -- confirmed directly via Web Inspector across several
+        // test rounds that audio.dataset.mvListenersAttached stayed
+        // undefined on a real device even after that fix deployed, with no
+        // errors logged anywhere. Rather than keep chasing that timing
+        // mystery, the call was moved out of this script block entirely --
+        // see the small dedicated <script> tag right after the mini
+        // player's own HTML further down this file, which sidesteps the
+        // question entirely: by simple document order, the element is
+        // guaranteed to exist by the time that tag is reached, full stop.
     </script>
 
     <!-- MINI PLAYER: audio-only playback of ripped tracks, reading directly
@@ -3348,5 +3339,16 @@ async function autoSaveToMacDirectory() {
         </div>
         <audio id="miniPlayerAudio"></audio>
     </div>
+
+    <script>
+        // Deliberately its own tiny script tag, placed here rather than
+        // inside the main script block further up the page -- see the
+        // comment at that block's setupMiniPlayerEvents call site for the
+        // full story. By plain document order, the mini player's audio
+        // element (right above this tag) is guaranteed to already exist by
+        // the time this runs, sidestepping any DOMContentLoaded/readyState
+        // timing question entirely.
+        setupMiniPlayerEvents();
+    </script>
 </body>
 </html>
