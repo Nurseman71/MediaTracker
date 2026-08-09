@@ -774,6 +774,13 @@
         let musicPlayerIndex = -1;
         let musicPlayerItem = null;
         let musicPlayerObjectUrl = null;
+        // Real, file-derived duration for the currently-loaded track (from
+        // the server's FLAC STREAMINFO parse), and a guard flag so the
+        // manual timeupdate-based advance and the native 'ended' event
+        // (whichever fires, if either does) can't both trigger
+        // miniPlayerNext() for the same track. See setupMiniPlayerEvents().
+        let musicPlayerExpectedDuration = null;
+        let musicPlayerHasAdvancedForCurrentTrack = false;
         let isAwaitingReauthorization = false;
         let remoteSyncInFlight = false;
         // The album currently loaded into musicPlayerTracks is always
@@ -1831,6 +1838,15 @@
                 musicPlayerTracks = data.tracks.map(t => ({
                     name: t.name,
                     url: buildRemoteMediaUrl(remoteUrl, remoteToken, t.path),
+                    // Server-computed, file-derived duration (from the FLAC's
+                    // own STREAMINFO block) -- see the 'timeupdate' listener
+                    // in setupMiniPlayerEvents for why this exists: iOS
+                    // Safari's own audio.duration/'ended' are unreliable for
+                    // these files, so this is used as the real source of
+                    // truth for "this track has finished" instead. Undefined
+                    // for non-FLAC tracks or if the server couldn't parse it
+                    // -- the native 'ended' event is the fallback for those.
+                    durationSec: t.durationSec,
                 }));
                 musicPlayerItem = item;
                 await loadAndPlayTrack(0);
@@ -1868,27 +1884,38 @@
             musicPlayerIndex = index;
             const track = musicPlayerTracks[index];
             const audio = document.getElementById('miniPlayerAudio');
-            mvLog('loadAndPlayTrack: index', index, 'of', musicPlayerTracks.length, 'name', track.name, 'isRemote', !!track.url);
+            mvLog('loadAndPlayTrack: index', index, 'of', musicPlayerTracks.length, 'name', track.name, 'isRemote', !!track.url, 'durationSec', track.durationSec);
+            // Reset per-track: the 'timeupdate' listener in
+            // setupMiniPlayerEvents() uses these to detect "reached the
+            // end" from the server's real duration instead of trusting
+            // Safari's own audio.duration/'ended' for this track.
+            musicPlayerExpectedDuration = (typeof track.durationSec === 'number' && track.durationSec > 0) ? track.durationSec : null;
+            musicPlayerHasAdvancedForCurrentTrack = false;
 
             if (track.url) {
                 // Remote track (streamed from the Mac's Remote Sync
-                // server). Downloading it fully via fetch() before playing
-                // (like the local-handle path below) broke playback
-                // outright on iPhone in an earlier attempt: awaiting a
-                // fetch() before calling audio.play() pushes .play()
-                // outside the original tap's user-gesture window, and iOS
-                // Safari's autoplay policy rejects that. So this starts
-                // playback by streaming the URL directly instead --
-                // audio.play() below stays synchronous with the tap --
-                // and separately kicks off a background download to
-                // upgrade to a Blob once playback has already started (see
-                // upgradeStreamedTrackToBlob below), which is what
-                // actually fixes end-of-track detection: audio.duration/
-                // seekable/'ended' were all unreliable for streamed FLAC
-                // on iPhone Safari specifically, which is why playback was
-                // just stopping after one track instead of auto-advancing
-                // -- blob: playback has never had that problem, same as
-                // the local-handle path.
+                // server), played by pointing <audio> straight at the URL
+                // and letting it stream progressively for the whole track.
+                //
+                // Two things NOT to "fix" here again, both learned the hard
+                // way (August 2026): (1) don't await a fetch() before
+                // calling audio.play() -- that pushes .play() outside the
+                // tap's user-gesture window and iOS Safari's autoplay
+                // policy rejects it outright. (2) don't hot-swap to a
+                // downloaded Blob partway through playback to try to fix
+                // end-of-track detection -- an earlier version of this code
+                // did that, and Web Inspector logging proved it doesn't
+                // help: audio.duration stays NaN even after a full Blob
+                // download, and none of ended/pause/stalled/suspend/waiting
+                // fire once duration is NaN. Worse, re-seeking to the
+                // resume position after the swap silently failed (also
+                // because duration was NaN), which audibly restarted the
+                // track from 0 every time. Auto-advance is instead handled
+                // by musicPlayerExpectedDuration (the server's real,
+                // file-derived duration -- see flac_duration_seconds() in
+                // media_vault_server.py) plus the 'timeupdate' listener in
+                // setupMiniPlayerEvents(), neither of which depend on
+                // Safari's duration/ended machinery at all.
                 if (musicPlayerObjectUrl) { URL.revokeObjectURL(musicPlayerObjectUrl); musicPlayerObjectUrl = null; }
                 audio.src = track.url;
             } else {
@@ -1923,8 +1950,6 @@
             document.getElementById('miniPlayerBar').classList.remove('hidden');
             updateMiniPlayerPlayPauseIcon();
             updateMediaSessionMetadata(trackTitle);
-
-            if (track.url) upgradeStreamedTrackToBlob(track, index);
         }
 
         // Publishes what's playing to the OS-level "Now Playing" session
@@ -1951,66 +1976,14 @@
             });
         }
 
-        // Runs in the background after a remote track has already started
-        // streaming and passed the tap-gesture check in loadAndPlayTrack --
-        // downloads the same track as a Blob and hot-swaps to it once
-        // ready, preserving the current playback position. This is what
-        // fixes end-of-track (and duration/seeking) reliability for
-        // streamed FLAC on iPhone Safari, without risking the original
-        // play() call the way downloading before that first play() did.
-        // TEMPORARY diagnostic logging (August 2026) while tracking down why
-        // auto-advance to the next track isn't happening on iPhone -- traces
-        // the whole lifecycle of a track load through to the 'ended' event.
-        // Safe to remove once that's resolved and confirmed fixed.
+        // Debug logging helper, kept (not just temporary) because the
+        // underlying unreliability of audio.duration/'ended' for streamed
+        // FLAC on iOS Safari is a platform quirk that could resurface in
+        // edge cases (e.g. a track the server couldn't parse a duration
+        // for) -- cheap to leave in, and has already paid for itself once
+        // diagnosing the auto-advance bug this file's August 2026 changes
+        // fixed.
         function mvLog(...args) { console.log('[MediaVault]', ...args); }
-
-        async function upgradeStreamedTrackToBlob(track, expectedIndex) {
-            const audio = document.getElementById('miniPlayerAudio');
-            mvLog('upgradeStreamedTrackToBlob: starting background download for', track.name, 'expectedIndex', expectedIndex);
-            try {
-                const res = await fetch(track.url);
-                mvLog('upgradeStreamedTrackToBlob: fetch responded', res.status, 'for', track.name);
-                if (!res.ok) return;
-                const rawFile = await res.blob();
-                mvLog('upgradeStreamedTrackToBlob: blob downloaded, size', rawFile.size, 'for', track.name);
-                // The user may have already moved on to a different track
-                // by the time this resolves -- swapping in a stale blob
-                // for the wrong track would be worse than doing nothing.
-                if (musicPlayerIndex !== expectedIndex) {
-                    mvLog('upgradeStreamedTrackToBlob: track changed while downloading (now', musicPlayerIndex, 'expected', expectedIndex, ') -- skipping swap');
-                    return;
-                }
-
-                const mimeType = mimeTypeForAudioFile(track.name);
-                const file = mimeType ? new Blob([rawFile], { type: mimeType }) : rawFile;
-                const wasPlaying = !audio.paused;
-                const resumeAt = audio.currentTime;
-                const newUrl = URL.createObjectURL(file);
-                audio.src = newUrl;
-                audio.currentTime = resumeAt;
-                if (musicPlayerObjectUrl) URL.revokeObjectURL(musicPlayerObjectUrl);
-                musicPlayerObjectUrl = newUrl;
-                mvLog('upgradeStreamedTrackToBlob: swapped to blob for', track.name, 'wasPlaying', wasPlaying, 'resumeAt', resumeAt, 'new duration', audio.duration);
-
-                if (wasPlaying) {
-                    audio.play().then(() => {
-                        mvLog('upgradeStreamedTrackToBlob: resumed playback after swap for', track.name);
-                    }).catch(err => {
-                        // The stream was already playing successfully
-                        // before this swap, so if resuming after the swap
-                        // gets rejected, leaving it paused (needing one
-                        // manual tap to continue) is a smaller problem
-                        // than either the swap failing outright or the
-                        // original streaming approach's broken auto-
-                        // advance -- logged, not alerted, since this is a
-                        // background upgrade, not a user-initiated action.
-                        console.log('Could not auto-resume after upgrading to a downloaded blob.', err);
-                    });
-                }
-            } catch (e) {
-                mvLog('upgradeStreamedTrackToBlob: FAILED for', track.name, e);
-            }
-        }
 
         function miniPlayerNext() {
             mvLog('miniPlayerNext: called. musicPlayerIndex', musicPlayerIndex, 'of', musicPlayerTracks.length, 'tracks; queueIndex', musicAlbumQueueIndex, 'of', musicAlbumQueue.length, 'albums');
@@ -2064,6 +2037,7 @@
             audio.src = '';
             if (musicPlayerObjectUrl) { URL.revokeObjectURL(musicPlayerObjectUrl); musicPlayerObjectUrl = null; }
             musicPlayerTracks = []; musicPlayerIndex = -1; musicPlayerItem = null;
+            musicPlayerExpectedDuration = null; musicPlayerHasAdvancedForCurrentTrack = false;
             musicAlbumQueue = []; musicAlbumQueueIndex = -1;
             document.getElementById('miniPlayerBar').classList.add('hidden');
             closeMiniPlayerMenu();
@@ -2267,11 +2241,46 @@
             if (menu && !menu.contains(e.target) && toggleBtn && !toggleBtn.contains(e.target)) closeMiniPlayerMenu();
         });
 
+        // Shared by the native 'ended' event and the manual timeupdate-based
+        // check below so a track can only trigger one advance -- without
+        // this, a track that DOES fire a legitimate 'ended' right around
+        // when timeupdate's own end-of-track check also trips could call
+        // miniPlayerNext() twice and skip two tracks instead of one.
+        function advanceToNextTrackOnce(reason) {
+            if (musicPlayerHasAdvancedForCurrentTrack) {
+                mvLog('advanceToNextTrackOnce: already advanced for this track, ignoring duplicate trigger from', reason);
+                return;
+            }
+            musicPlayerHasAdvancedForCurrentTrack = true;
+            mvLog('advanceToNextTrackOnce: advancing, triggered by', reason);
+            miniPlayerNext();
+        }
+
         function setupMiniPlayerEvents() {
             const audio = document.getElementById('miniPlayerAudio');
             audio.addEventListener('ended', () => {
                 mvLog('ended event fired! musicPlayerIndex', musicPlayerIndex, 'audio.currentTime', audio.currentTime, 'audio.duration', audio.duration, 'audio.src', audio.src);
-                miniPlayerNext();
+                advanceToNextTrackOnce('ended event');
+            });
+            audio.addEventListener('timeupdate', () => {
+                // The real fix for auto-advance not working on iOS Safari:
+                // don't wait for 'ended' or trust audio.duration at all for
+                // these FLAC files (confirmed via Web Inspector that both
+                // are unreliable -- duration stays NaN and 'ended' never
+                // fires once it does). musicPlayerExpectedDuration comes
+                // from the server parsing the file's own STREAMINFO block
+                // (see flac_duration_seconds() in media_vault_server.py),
+                // so this compares real playback position against a real,
+                // file-derived duration instead. 0.75s of slack accounts for
+                // timeupdate's firing granularity (browsers fire it at most
+                // ~4x/second, not continuously) so this reliably trips
+                // before playback would otherwise run out of decoded audio
+                // and go silent.
+                if (musicPlayerExpectedDuration === null) return;
+                if (audio.currentTime >= musicPlayerExpectedDuration - 0.75) {
+                    mvLog('timeupdate: reached expected end. currentTime', audio.currentTime, 'expectedDuration', musicPlayerExpectedDuration);
+                    advanceToNextTrackOnce('timeupdate near expected duration');
+                }
             });
             audio.addEventListener('play', () => {
                 mvLog('play event fired. audio.src', audio.src, 'audio.currentTime', audio.currentTime);
