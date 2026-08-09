@@ -779,6 +779,14 @@
         // manual timeupdate-based advance and the native 'ended' event
         // (whichever fires, if either does) can't both trigger
         // miniPlayerNext() for the same track. See setupMiniPlayerEvents().
+        // Set by playMoreLikeThis() when Chris chose "finish the current
+        // song first, then move into similar tracks" over interrupting
+        // playback immediately (August 2026). miniPlayerNext() checks this
+        // before its normal advance logic and, if set, jumps straight into
+        // this queue instead -- skipping any remaining tracks in the
+        // currently-playing album, matching "after THIS song" rather than
+        // "after this whole album."
+        let pendingQueueAfterCurrentTrack = null;
         let musicPlayerExpectedDuration = null;
         let musicPlayerHasAdvancedForCurrentTrack = false;
         let isAwaitingReauthorization = false;
@@ -1735,6 +1743,13 @@
         // miniPlayerNext() to advance into as each album's tracks finish.
         async function playAlbumQueue(items, startIndex) {
             if (!items || items.length === 0 || startIndex < 0 || startIndex >= items.length) return;
+            // Starting any new queue here invalidates a still-pending
+            // "More Like This" from a previous song -- it was scoped to
+            // "after that specific song," not "whenever anything next
+            // finishes playing." Harmless no-op when THIS call is itself
+            // miniPlayerNext() consuming that same pending queue, since
+            // that path already nulls it out before calling here.
+            pendingQueueAfterCurrentTrack = null;
             musicAlbumQueue = items;
             musicAlbumQueueIndex = startIndex;
             const item = musicAlbumQueue[musicAlbumQueueIndex];
@@ -1987,6 +2002,17 @@
 
         function miniPlayerNext() {
             mvLog('miniPlayerNext: called. musicPlayerIndex', musicPlayerIndex, 'of', musicPlayerTracks.length, 'tracks; queueIndex', musicAlbumQueueIndex, 'of', musicAlbumQueue.length, 'albums');
+            // A "More Like This" queued during the previous song takes
+            // priority over anything else -- including any tracks still
+            // left in the currently-playing album -- since the whole point
+            // was "after THIS song," not "after this whole album."
+            if (pendingQueueAfterCurrentTrack) {
+                const queued = pendingQueueAfterCurrentTrack;
+                pendingQueueAfterCurrentTrack = null;
+                mvLog('miniPlayerNext: consuming pending "More Like This" queue,', queued.length, 'item(s)');
+                playAlbumQueue(queued, 0);
+                return;
+            }
             if (musicPlayerIndex + 1 < musicPlayerTracks.length) {
                 loadAndPlayTrack(musicPlayerIndex + 1);
                 return;
@@ -2039,6 +2065,7 @@
             musicPlayerTracks = []; musicPlayerIndex = -1; musicPlayerItem = null;
             musicPlayerExpectedDuration = null; musicPlayerHasAdvancedForCurrentTrack = false;
             musicAlbumQueue = []; musicAlbumQueueIndex = -1;
+            pendingQueueAfterCurrentTrack = null;
             document.getElementById('miniPlayerBar').classList.add('hidden');
             closeMiniPlayerMenu();
             // Clears the Lock Screen/Control Center/CarPlay Now Playing
@@ -2098,8 +2125,14 @@
                 alert(`Nothing else in your vault shares a genre with "${musicPlayerItem.title}" (${genreList}).`);
                 return;
             }
-            playAlbumQueue(shuffleArray(similar), 0);
+            // Queues after the current song instead of interrupting it --
+            // Chris's explicit preference (August 2026) over the original
+            // behavior, which replaced the queue and jumped to the new
+            // music immediately. See pendingQueueAfterCurrentTrack and
+            // miniPlayerNext().
+            pendingQueueAfterCurrentTrack = shuffleArray(similar);
             closeMiniPlayerMenu();
+            alert(`Queued ${similar.length} similar track${similar.length === 1 ? '' : 's'} — they'll play after this song finishes.`);
         }
 
         // --- Saved playlists (localStorage-backed) ---
