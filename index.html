@@ -2258,6 +2258,25 @@
 
         function setupMiniPlayerEvents() {
             const audio = document.getElementById('miniPlayerAudio');
+            if (!audio) {
+                // Should be unreachable now that the call site defers to
+                // DOMContentLoaded (see the comment there), but failing
+                // loudly here beats a repeat of this bug silently costing
+                // another multi-day diagnostic hunt if something regresses
+                // this again.
+                console.error('[MediaVault] setupMiniPlayerEvents: #miniPlayerAudio not found in the DOM -- mini player controls will not work.');
+                return;
+            }
+            // Idempotency guard: this only ever needs to run once. Without
+            // it, any future accidental second call (this file's own August
+            // 2026 debugging session did exactly that, manually, to work
+            // around the DOMContentLoaded bug before it was found and fixed
+            // -- see the call site) would stack a second full set of
+            // listeners on the same <audio> element, and every track-end
+            // would then call miniPlayerNext() twice, silently skipping a
+            // track instead of playing it.
+            if (audio.dataset.mvListenersAttached === 'true') return;
+            audio.dataset.mvListenersAttached = 'true';
             audio.addEventListener('ended', () => {
                 mvLog('ended event fired! musicPlayerIndex', musicPlayerIndex, 'audio.currentTime', audio.currentTime, 'audio.duration', audio.duration, 'audio.src', audio.src);
                 advanceToNextTrackOnce('ended event');
@@ -3251,7 +3270,30 @@ async function autoSaveToMacDirectory() {
         runDataMigrationChecks();
         renderCollection();
         loadCachedHandleFromStorage();
-        setupMiniPlayerEvents();
+        // NOT setupMiniPlayerEvents() directly here -- this is the actual
+        // root cause of the whole "doesn't auto-advance to the next track"
+        // bug (August 2026), unrelated to the audio.duration/FLAC work
+        // elsewhere in this file. <div id="miniPlayerBar"> (and the
+        // <audio id="miniPlayerAudio"> inside it) is defined further down
+        // in the raw HTML, AFTER this </script> tag closes -- so at the
+        // moment this line ran, during the browser's initial top-to-bottom
+        // parse, that element didn't exist in the DOM yet.
+        // document.getElementById('miniPlayerAudio') returned null, and the
+        // very first addEventListener call inside setupMiniPlayerEvents()
+        // threw immediately, silently aborting the whole function before a
+        // single listener got attached. Confirmed directly via Web
+        // Inspector: manually re-running setupMiniPlayerEvents() from the
+        // console mid-session (well after full page load) immediately made
+        // every event -- play, pause, ended, timeupdate -- start firing and
+        // logging correctly. Deferring to DOMContentLoaded (or running
+        // immediately if the document has, for whatever reason, already
+        // finished loading by the time this line executes) guarantees the
+        // element exists first.
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', setupMiniPlayerEvents);
+        } else {
+            setupMiniPlayerEvents();
+        }
     </script>
 
     <!-- MINI PLAYER: audio-only playback of ripped tracks, reading directly
