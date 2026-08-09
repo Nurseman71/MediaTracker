@@ -3,7 +3,7 @@
 // External API calls (OMDb, iTunes) and CDN scripts always go to the network first,
 // since the whole point of those is fresh data / library correctness.
 
-const CACHE_NAME = 'media-vault-shell-v25';
+const CACHE_NAME = 'media-vault-shell-v26';
 const SHELL_FILES = [
   './',
   './index.html',

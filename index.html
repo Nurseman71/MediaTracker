@@ -2195,7 +2195,18 @@
         function closeMiniPlayer() {
             const audio = document.getElementById('miniPlayerAudio');
             audio.pause();
-            audio.src = '';
+            // NOT audio.src = '' -- an empty string resolves against the
+            // page's own URL (not "no source"), so the browser tries to
+            // load this HTML page itself as audio, fails the format
+            // check, and fires a real 'error' event (code 4) that the
+            // error listener in setupMiniPlayerEvents then surfaces as a
+            // confusing "format not supported" alert on every single
+            // intentional close. removeAttribute + load() is the actual
+            // spec-correct way to fully detach the source: with no src
+            // attribute and no <source> children, there's nothing for the
+            // resource selection algorithm to fail on, so no error fires.
+            audio.removeAttribute('src');
+            audio.load();
             if (musicPlayerObjectUrl) { URL.revokeObjectURL(musicPlayerObjectUrl); musicPlayerObjectUrl = null; }
             musicPlayerTracks = []; musicPlayerIndex = -1; musicPlayerItem = null;
             musicPlayerExpectedDuration = null; musicPlayerHasAdvancedForCurrentTrack = false;
