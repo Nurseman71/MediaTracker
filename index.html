@@ -176,6 +176,9 @@
                     <button onclick="closeMoreMenu(); shuffleAllMusic()" class="w-full md:w-auto bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
                         🔀 Shuffle All Music
                     </button>
+                    <button onclick="closeMoreMenu(); openRecentlyPlayedModal()" class="w-full md:w-auto bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
+                        🕐 Recently Played
+                    </button>
                     <button onclick="closeMoreMenu(); openPlaylistsModal()" class="w-full md:w-auto bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 font-bold text-sm px-4 py-2.5 rounded-xl shadow-md flex items-center justify-center gap-1.5">
                         🎵 Playlists
                     </button>
@@ -622,6 +625,49 @@
         </div>
     </div>
 
+    <!-- MODAL 10: Recently Played -->
+    <div id="recentlyPlayedModal" class="fixed inset-0 bg-slate-950/80 hidden z-50 flex items-center justify-center p-4 backdrop-blur-md" onclick="closeModal(event)">
+        <div class="bg-slate-900 border border-slate-700/60 rounded-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto shadow-2xl relative" onclick="event.stopPropagation()">
+            <button onclick="toggleModal('recentlyPlayedModal', false)" aria-label="Close recently played" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg font-bold bg-slate-800 w-11 h-11 rounded-full flex items-center justify-center border border-slate-700">&times;</button>
+            <div class="p-5">
+                <div class="flex items-center justify-between mb-1">
+                    <h3 class="text-base font-black text-white">Recently Played</h3>
+                    <button onclick="clearRecentlyPlayed()" class="text-[11px] text-slate-500 hover:text-rose-400">Clear</button>
+                </div>
+                <p class="text-xs text-slate-400 mb-4">The last 30 albums you've played, most recent first.</p>
+                <div id="recentlyPlayedContent" class="flex flex-col gap-2"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 11: Up Next (current queue) -->
+    <div id="upNextModal" class="fixed inset-0 bg-slate-950/80 hidden z-50 flex items-center justify-center p-4 backdrop-blur-md" onclick="closeModal(event)">
+        <div class="bg-slate-900 border border-slate-700/60 rounded-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto shadow-2xl relative" onclick="event.stopPropagation()">
+            <button onclick="toggleModal('upNextModal', false)" aria-label="Close up next" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg font-bold bg-slate-800 w-11 h-11 rounded-full flex items-center justify-center border border-slate-700">&times;</button>
+            <div class="p-5">
+                <h3 class="text-base font-black text-white mb-4">Up Next</h3>
+                <div id="upNextContent" class="flex flex-col gap-4"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 12: Edit Playlist (rename + reorder/remove tracks) -->
+    <div id="editPlaylistModal" class="fixed inset-0 bg-slate-950/80 hidden z-50 flex items-center justify-center p-4 backdrop-blur-md" onclick="closeModal(event)">
+        <div class="bg-slate-900 border border-slate-700/60 rounded-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto shadow-2xl relative" onclick="event.stopPropagation()">
+            <button onclick="toggleModal('editPlaylistModal', false)" aria-label="Close edit playlist" class="absolute top-4 right-4 text-slate-400 hover:text-white text-lg font-bold bg-slate-800 w-11 h-11 rounded-full flex items-center justify-center border border-slate-700">&times;</button>
+            <div class="p-5">
+                <h3 class="text-base font-black text-white mb-3">Edit Playlist</h3>
+                <label class="text-xs text-slate-400 font-bold uppercase tracking-wider">Playlist Name</label>
+                <div class="flex items-center gap-2 mt-1 mb-4">
+                    <input id="editPlaylistName" type="text" class="flex-grow bg-slate-800 border border-slate-700 text-sm rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    <button onclick="saveEditPlaylistName()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-2.5 rounded-lg flex-shrink-0">Save Name</button>
+                </div>
+                <p class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">Tracks</p>
+                <div id="editPlaylistTracks" class="flex flex-col gap-1.5"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- UNDO NOTIFICATION TOAST BAR -->
     <div id="undoToast" class="fixed bottom-4 left-4 right-4 bg-slate-900/95 border border-slate-700/60 shadow-2xl rounded-xl p-3 flex items-center justify-between z-50 transition-all duration-300 translate-y-24 opacity-0 pointer-events-none max-w-sm mx-auto backdrop-blur-md">
         <div class="flex items-center gap-2 text-xs text-slate-200">
@@ -800,6 +846,15 @@
         // fetching every album's tracklist up front.
         let musicAlbumQueue = [];
         let musicAlbumQueueIndex = -1;
+        // Repeat mode for the mini player: 'off' | 'one' | 'album'.
+        // 'album' repeats whichever container is currently loaded -- a
+        // single album loops itself, a longer queue (Shuffle All/More Like
+        // This/a playlist) loops the whole queue -- see the tail of
+        // miniPlayerNext(). 'one' only affects auto-advance at a track's
+        // natural end (advanceToNextTrackOnce, called from 'ended'/
+        // 'timeupdate'), not the manual ⏭ button, matching standard media
+        // player conventions. Persisted so it survives a reload.
+        let repeatMode = localStorage.getItem('mediaVaultRepeatMode') || 'off';
 
         // Escapes untrusted text before it's inserted via innerHTML (titles/artists/etc.
         // come from external APIs and manual entry, so treat them as untrusted).
@@ -1806,6 +1861,7 @@
 
                 musicPlayerTracks = tracks;
                 musicPlayerItem = item;
+                recordRecentlyPlayed(item);
                 await loadAndPlayTrack(0);
             } catch (e) {
                 console.log('Album playback failed to start.', e);
@@ -1864,6 +1920,7 @@
                     durationSec: t.durationSec,
                 }));
                 musicPlayerItem = item;
+                recordRecentlyPlayed(item);
                 await loadAndPlayTrack(0);
             } catch (e) {
                 console.log('Remote album playback failed to start.', e);
@@ -1965,6 +2022,7 @@
             document.getElementById('miniPlayerBar').classList.remove('hidden');
             updateMiniPlayerPlayPauseIcon();
             updateMediaSessionMetadata(trackTitle);
+            updateMiniPlayerTimeDisplay(audio);
         }
 
         // Publishes what's playing to the OS-level "Now Playing" session
@@ -2000,6 +2058,68 @@
         // fixed.
         function mvLog(...args) { console.log('[MediaVault]', ...args); }
 
+        // --- Volume (persisted across sessions/reloads) ---
+        function getSavedVolume() {
+            const raw = localStorage.getItem('mediaVaultVolume');
+            const parsed = raw !== null ? parseFloat(raw) : 1;
+            return (isFinite(parsed) && parsed >= 0 && parsed <= 1) ? parsed : 1;
+        }
+
+        function setMiniPlayerVolume(percent) {
+            const vol = Math.min(100, Math.max(0, Number(percent))) / 100;
+            document.getElementById('miniPlayerAudio').volume = vol;
+            safeSetLocalStorage('mediaVaultVolume', String(vol));
+        }
+
+        // --- Repeat mode ---
+        function repeatModeLabel() {
+            if (repeatMode === 'one') return '🔂 Repeat: One Track';
+            if (repeatMode === 'album') return '🔁 Repeat: Album/Queue';
+            return '🔁 Repeat: Off';
+        }
+
+        function cycleRepeatMode() {
+            repeatMode = repeatMode === 'off' ? 'album' : (repeatMode === 'album' ? 'one' : 'off');
+            safeSetLocalStorage('mediaVaultRepeatMode', repeatMode);
+            const btn = document.getElementById('miniPlayerRepeatBtn');
+            if (btn) btn.innerText = repeatModeLabel();
+        }
+
+        // --- Elapsed/remaining time display ---
+        // Deliberately NOT a scrubber -- see the comment on miniPlayerBar
+        // in the HTML for why the seek bar was removed (audio.duration
+        // never resolves for streamed FLAC on iOS Safari). This only reads
+        // currentTime (which DOES update reliably) plus whichever total
+        // duration is actually available, so it degrades gracefully
+        // instead of being removed entirely like the scrubber was.
+        function formatTime(seconds) {
+            if (!isFinite(seconds) || seconds < 0) return '--:--';
+            const m = Math.floor(seconds / 60);
+            const s = Math.floor(seconds % 60);
+            return `${m}:${String(s).padStart(2, '0')}`;
+        }
+
+        function currentTrackTotalSeconds(audio) {
+            // Prefer the server-computed, file-derived duration (present
+            // for remote-streamed FLAC tracks -- see durationSec in
+            // playAlbumFromRemoteServer) since audio.duration is exactly
+            // the value that's unreliable there. Falls back to
+            // audio.duration for local-folder playback (desktop, via the
+            // File System Access API), where it resolves fine -- the NaN
+            // bug is specific to streaming, not local Blob playback.
+            const track = musicPlayerTracks[musicPlayerIndex];
+            if (track && typeof track.durationSec === 'number' && track.durationSec > 0) return track.durationSec;
+            if (isFinite(audio.duration) && audio.duration > 0) return audio.duration;
+            return null;
+        }
+
+        function updateMiniPlayerTimeDisplay(audio) {
+            const el = document.getElementById('miniPlayerTimeDisplay');
+            if (!el) return;
+            const total = currentTrackTotalSeconds(audio);
+            el.innerText = total !== null ? `${formatTime(audio.currentTime)} / ${formatTime(total)}` : formatTime(audio.currentTime);
+        }
+
         function miniPlayerNext() {
             mvLog('miniPlayerNext: called. musicPlayerIndex', musicPlayerIndex, 'of', musicPlayerTracks.length, 'tracks; queueIndex', musicAlbumQueueIndex, 'of', musicAlbumQueue.length, 'albums');
             // A "More Like This" queued during the previous song takes
@@ -2024,6 +2144,13 @@
             // before album queuing existed.
             if (musicAlbumQueueIndex + 1 < musicAlbumQueue.length) {
                 playAlbumQueue(musicAlbumQueue, musicAlbumQueueIndex + 1);
+            } else if (repeatMode === 'album' && musicAlbumQueue.length > 0) {
+                // Loops whichever container is loaded: a plain single-album
+                // play is a one-item queue, so this just restarts that one
+                // album; a longer queue (Shuffle All/More Like This/a saved
+                // playlist) restarts from its own beginning instead.
+                mvLog('miniPlayerNext: repeat-album, looping back to the start of the queue');
+                playAlbumQueue(musicAlbumQueue, 0);
             } else {
                 mvLog('miniPlayerNext: nothing left to advance to (end of album queue)');
             }
@@ -2055,6 +2182,14 @@
             const audio = document.getElementById('miniPlayerAudio');
             const btn = document.getElementById('miniPlayerPlayPauseBtn');
             if (btn) btn.innerText = audio.paused ? '▶' : '⏸';
+        }
+
+        // Opens the currently-playing album's own detail page (same modal
+        // every album card elsewhere in the app uses) -- playback keeps
+        // running underneath, the mini player bar itself doesn't move.
+        function jumpToPlayingAlbumDetails() {
+            if (!musicPlayerItem) return;
+            openItemDetails(musicPlayerItem.id);
         }
 
         function closeMiniPlayer() {
@@ -2164,6 +2299,72 @@
             alert(`Queued ${similar.length} similar track${similar.length === 1 ? '' : 's'} — they'll play after this song finishes.`);
         }
 
+        // --- Recently played (localStorage-backed) ---
+        // Recorded at album granularity, not per-track -- the rest of the
+        // app (playlists, "More Like This") already keys everything on
+        // whole music entries/albums, not individual songs, so this stays
+        // consistent with that rather than introducing a new per-track
+        // identity concept just for this feature.
+        function getRecentlyPlayed() {
+            try {
+                const raw = localStorage.getItem('mediaVaultRecentlyPlayed');
+                const parsed = raw ? JSON.parse(raw) : [];
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (err) {
+                console.error('Could not read recently played:', err);
+                return [];
+            }
+        }
+
+        function recordRecentlyPlayed(item) {
+            if (!item) return;
+            let list = getRecentlyPlayed().filter(e => e.id !== item.id);
+            list.unshift({ id: item.id, playedAt: Date.now() });
+            safeSetLocalStorage('mediaVaultRecentlyPlayed', JSON.stringify(list.slice(0, 30)));
+        }
+
+        function openRecentlyPlayedModal() {
+            renderRecentlyPlayedContent();
+            toggleModal('recentlyPlayedModal', true);
+        }
+
+        function renderRecentlyPlayedContent() {
+            const content = document.getElementById('recentlyPlayedContent');
+            // Silently drops any id no longer in the collection (deleted
+            // since) rather than showing a broken row for it -- same
+            // approach resolvePlaylistItems already uses for playlists.
+            const entries = getRecentlyPlayed()
+                .map(e => collection.find(i => i.type === 'music' && i.id === e.id))
+                .filter(Boolean);
+            if (entries.length === 0) {
+                content.innerHTML = '<p class="text-slate-500 text-sm text-center py-6">Nothing played yet.</p>';
+                return;
+            }
+            content.innerHTML = entries.map(item => `
+                <div class="flex items-center gap-3 bg-slate-800/60 border border-slate-700/60 rounded-xl px-3 py-2.5">
+                    <img src="${item.image}" class="w-9 h-9 rounded object-cover flex-shrink-0 bg-slate-950">
+                    <div class="min-w-0 flex-grow">
+                        <p class="text-sm font-bold text-slate-100 truncate">${escapeHtml(item.title)}</p>
+                        <p class="text-[11px] text-slate-500 truncate">${escapeHtml(item.creator)}</p>
+                    </div>
+                    <button onclick="playRecentlyPlayedItem('${item.id}')" aria-label="Play ${escapeHtml(item.title)}" class="w-9 h-9 flex-shrink-0 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center">▶</button>
+                </div>
+            `).join('');
+        }
+
+        function playRecentlyPlayedItem(id) {
+            const item = collection.find(i => i.type === 'music' && i.id === id);
+            if (!item) return;
+            toggleModal('recentlyPlayedModal', false);
+            playAlbumQueue([item], 0);
+        }
+
+        function clearRecentlyPlayed() {
+            if (!confirm('Clear your recently played history?')) return;
+            safeSetLocalStorage('mediaVaultRecentlyPlayed', JSON.stringify([]));
+            renderRecentlyPlayedContent();
+        }
+
         // --- Saved playlists (localStorage-backed) ---
         // A playlist stores item ids, not full item snapshots, so it stays
         // current if an item's own metadata is edited later -- resolved
@@ -2258,6 +2459,7 @@
                             <p class="text-[11px] text-slate-500">${availableCount} track${availableCount === 1 ? '' : 's'}${missingNote}</p>
                         </div>
                         <button onclick="playPlaylist('${playlist.id}')" aria-label="Play playlist ${escapeHtml(playlist.name)}" class="w-9 h-9 flex-shrink-0 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center">▶</button>
+                        <button onclick="openEditPlaylistModal('${playlist.id}')" aria-label="Edit playlist ${escapeHtml(playlist.name)}" class="w-9 h-9 flex-shrink-0 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 flex items-center justify-center">✏️</button>
                         <button onclick="deletePlaylist('${playlist.id}')" aria-label="Delete playlist ${escapeHtml(playlist.name)}" class="w-9 h-9 flex-shrink-0 rounded-full bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-400 flex items-center justify-center">🗑</button>
                     </div>
                 `;
@@ -2284,12 +2486,109 @@
             renderPlaylistsContent();
         }
 
+        // --- Edit playlist (rename + reorder/remove tracks) ---
+        // A playlist previously could only be created (with whatever
+        // genre-similar tracks matched at that moment) or deleted outright
+        // -- no way to fix a bad match, drop a track, or reorder without
+        // starting over. editingPlaylistId tracks which playlist the
+        // modal below is currently open for.
+        let editingPlaylistId = null;
+
+        function openEditPlaylistModal(playlistId) {
+            const playlist = getPlaylists().find(p => p.id === playlistId);
+            if (!playlist) return;
+            editingPlaylistId = playlistId;
+            document.getElementById('editPlaylistName').value = playlist.name;
+            renderEditPlaylistTracks();
+            toggleModal('editPlaylistModal', true);
+        }
+
+        function saveEditPlaylistName() {
+            const name = document.getElementById('editPlaylistName').value.trim();
+            if (!name) { alert('Give the playlist a name first.'); return; }
+            const playlists = getPlaylists();
+            const playlist = playlists.find(p => p.id === editingPlaylistId);
+            if (!playlist) return;
+            playlist.name = name;
+            savePlaylists(playlists);
+            renderPlaylistsContent();
+        }
+
+        function renderEditPlaylistTracks() {
+            const container = document.getElementById('editPlaylistTracks');
+            const playlist = getPlaylists().find(p => p.id === editingPlaylistId);
+            if (!playlist) { container.innerHTML = ''; return; }
+            const items = resolvePlaylistItems(playlist);
+            if (items.length === 0) {
+                container.innerHTML = '<p class="text-slate-500 text-sm text-center py-4">No tracks left in this playlist.</p>';
+                return;
+            }
+            container.innerHTML = items.map((item, i) => `
+                <div class="flex items-center gap-2 bg-slate-800/60 border border-slate-700/60 rounded-lg px-2.5 py-2">
+                    <img src="${item.image}" class="w-8 h-8 rounded object-cover flex-shrink-0 bg-slate-950">
+                    <div class="min-w-0 flex-grow">
+                        <span class="block text-sm text-slate-200 truncate">${escapeHtml(item.title)}</span>
+                        <span class="block text-[11px] text-slate-500 truncate">${escapeHtml(item.creator)}</span>
+                    </div>
+                    <button onclick="moveEditPlaylistTrack(${i}, -1)" aria-label="Move up" class="w-7 h-7 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs flex items-center justify-center">↑</button>
+                    <button onclick="moveEditPlaylistTrack(${i}, 1)" aria-label="Move down" class="w-7 h-7 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs flex items-center justify-center">↓</button>
+                    <button onclick="removeEditPlaylistTrack(${i})" aria-label="Remove" class="w-7 h-7 rounded-md bg-slate-800 hover:bg-rose-900/60 text-slate-500 hover:text-rose-400 text-xs flex items-center justify-center">✕</button>
+                </div>
+            `).join('');
+        }
+
+        function moveEditPlaylistTrack(index, delta) {
+            const playlists = getPlaylists();
+            const playlist = playlists.find(p => p.id === editingPlaylistId);
+            if (!playlist) return;
+            const items = resolvePlaylistItems(playlist);
+            const target = index + delta;
+            if (target < 0 || target >= items.length) return;
+            // Swaps by id within the underlying trackItemIds array rather
+            // than by raw array position -- resolvePlaylistItems silently
+            // drops any id no longer in the collection, so the resolved
+            // list's indexes don't necessarily line up with trackItemIds'
+            // indexes if a stale id is sitting in between two real ones.
+            const ids = playlist.trackItemIds || [];
+            const idxA = ids.indexOf(items[index].id);
+            const idxB = ids.indexOf(items[target].id);
+            if (idxA === -1 || idxB === -1) return;
+            [ids[idxA], ids[idxB]] = [ids[idxB], ids[idxA]];
+            savePlaylists(playlists);
+            renderEditPlaylistTracks();
+        }
+
+        function removeEditPlaylistTrack(index) {
+            const playlists = getPlaylists();
+            const playlist = playlists.find(p => p.id === editingPlaylistId);
+            if (!playlist) return;
+            const items = resolvePlaylistItems(playlist);
+            const toRemove = items[index];
+            if (!toRemove) return;
+            playlist.trackItemIds = (playlist.trackItemIds || []).filter(id => id !== toRemove.id);
+            savePlaylists(playlists);
+            renderEditPlaylistTracks();
+            renderPlaylistsContent();
+        }
+
         // --- Mini player "⋮" menu (More Like This / Save as Playlist) ---
         let miniPlayerMenuOpen = false;
         function toggleMiniPlayerMenu(event) {
             if (event) event.stopPropagation();
             miniPlayerMenuOpen = !miniPlayerMenuOpen;
             document.getElementById('miniPlayerMenu').classList.toggle('hidden', !miniPlayerMenuOpen);
+            if (miniPlayerMenuOpen) {
+                // Sync the repeat label and volume slider to actual current
+                // state every time the menu opens -- both can change from
+                // outside this menu (repeat via localStorage on reload,
+                // volume via the audio element's own current value), so
+                // they can't just be set once at page load.
+                const repeatBtn = document.getElementById('miniPlayerRepeatBtn');
+                if (repeatBtn) repeatBtn.innerText = repeatModeLabel();
+                const volumeSlider = document.getElementById('miniPlayerVolumeSlider');
+                const audio = document.getElementById('miniPlayerAudio');
+                if (volumeSlider && audio) volumeSlider.value = Math.round(audio.volume * 100);
+            }
         }
         function closeMiniPlayerMenu() {
             miniPlayerMenuOpen = false;
@@ -2303,6 +2602,146 @@
             if (menu && !menu.contains(e.target) && toggleBtn && !toggleBtn.contains(e.target)) closeMiniPlayerMenu();
         });
 
+        // --- Up Next: what's queued after the current track ---
+        // Three tiers, matching the actual data this app has on hand
+        // without fetching every upcoming album's tracklist just to render
+        // a list (musicPlayerTracks only ever holds the CURRENTLY loaded
+        // album's tracks -- see loadAndPlayTrack): remaining tracks in the
+        // album playing right now (real track names, already loaded),
+        // then any "More Like This" queue pending after this song
+        // (pendingQueueAfterCurrentTrack), then remaining albums further
+        // out in the album queue (musicAlbumQueue) -- these last two are
+        // shown at album level, not per-track, since their own tracklists
+        // aren't fetched until they actually start playing.
+        function openUpNextModal() {
+            closeMiniPlayerMenu();
+            renderUpNextContent();
+            toggleModal('upNextModal', true);
+        }
+
+        function upNextTrackRow(track, index) {
+            const name = escapeHtml(track.name.replace(/\.[^.]+$/, ''));
+            return `
+                <div class="flex items-center gap-2 bg-slate-800/60 border border-slate-700/60 rounded-lg px-2.5 py-2">
+                    <button onclick="jumpToUpNextTrack(${index})" class="min-w-0 flex-grow text-left text-sm text-slate-200 truncate hover:text-indigo-400">${name}</button>
+                    <button onclick="moveUpNextTrack(${index}, -1)" aria-label="Move up" class="w-7 h-7 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs flex items-center justify-center">↑</button>
+                    <button onclick="moveUpNextTrack(${index}, 1)" aria-label="Move down" class="w-7 h-7 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs flex items-center justify-center">↓</button>
+                    <button onclick="removeUpNextTrack(${index})" aria-label="Remove" class="w-7 h-7 rounded-md bg-slate-800 hover:bg-rose-900/60 text-slate-500 hover:text-rose-400 text-xs flex items-center justify-center">✕</button>
+                </div>`;
+        }
+
+        function upNextAlbumRow(item, index, source) {
+            const jumpFn = source === 'queue' ? `jumpToUpNextAlbum(${index})` : `jumpToPendingAlbum(${index})`;
+            const moveFn = source === 'queue' ? 'moveUpNextAlbum' : 'movePendingAlbum';
+            const removeFn = source === 'queue' ? 'removeUpNextAlbum' : 'removePendingAlbum';
+            return `
+                <div class="flex items-center gap-2 bg-slate-800/60 border border-slate-700/60 rounded-lg px-2.5 py-2">
+                    <img src="${item.image}" class="w-8 h-8 rounded object-cover flex-shrink-0 bg-slate-950">
+                    <button onclick="${jumpFn}" class="min-w-0 flex-grow text-left hover:text-indigo-400">
+                        <span class="block text-sm text-slate-200 truncate">${escapeHtml(item.title)}</span>
+                        <span class="block text-[11px] text-slate-500 truncate">${escapeHtml(item.creator)}</span>
+                    </button>
+                    <button onclick="${moveFn}(${index}, -1)" aria-label="Move up" class="w-7 h-7 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs flex items-center justify-center">↑</button>
+                    <button onclick="${moveFn}(${index}, 1)" aria-label="Move down" class="w-7 h-7 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs flex items-center justify-center">↓</button>
+                    <button onclick="${removeFn}(${index})" aria-label="Remove" class="w-7 h-7 rounded-md bg-slate-800 hover:bg-rose-900/60 text-slate-500 hover:text-rose-400 text-xs flex items-center justify-center">✕</button>
+                </div>`;
+        }
+
+        function renderUpNextContent() {
+            const content = document.getElementById('upNextContent');
+            if (!musicPlayerItem) {
+                content.innerHTML = '<p class="text-slate-500 text-sm text-center py-6">Nothing is playing.</p>';
+                return;
+            }
+
+            const sections = [];
+
+            const remainingTracks = musicPlayerTracks.map((t, i) => ({ t, i })).filter(x => x.i > musicPlayerIndex);
+            if (remainingTracks.length > 0) {
+                sections.push(`<div><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">Later in this album</p><div class="flex flex-col gap-1.5">${
+                    remainingTracks.map(({ t, i }) => upNextTrackRow(t, i)).join('')
+                }</div></div>`);
+            }
+
+            if (pendingQueueAfterCurrentTrack && pendingQueueAfterCurrentTrack.length > 0) {
+                sections.push(`<div><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">After this song (More Like This)</p><div class="flex flex-col gap-1.5">${
+                    pendingQueueAfterCurrentTrack.map((item, i) => upNextAlbumRow(item, i, 'pending')).join('')
+                }</div></div>`);
+            }
+
+            const remainingAlbums = musicAlbumQueue.map((item, i) => ({ item, i })).filter(x => x.i > musicAlbumQueueIndex);
+            if (remainingAlbums.length > 0) {
+                sections.push(`<div><p class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">Up next</p><div class="flex flex-col gap-1.5">${
+                    remainingAlbums.map(({ item, i }) => upNextAlbumRow(item, i, 'queue')).join('')
+                }</div></div>`);
+            }
+
+            content.innerHTML = sections.length > 0 ? sections.join('') : '<p class="text-slate-500 text-sm text-center py-6">Nothing queued up after this.</p>';
+        }
+
+        function jumpToUpNextTrack(index) {
+            toggleModal('upNextModal', false);
+            loadAndPlayTrack(index);
+        }
+
+        function moveUpNextTrack(index, delta) {
+            const target = index + delta;
+            if (target <= musicPlayerIndex || target >= musicPlayerTracks.length) return;
+            [musicPlayerTracks[index], musicPlayerTracks[target]] = [musicPlayerTracks[target], musicPlayerTracks[index]];
+            renderUpNextContent();
+        }
+
+        function removeUpNextTrack(index) {
+            if (index <= musicPlayerIndex) return;
+            musicPlayerTracks.splice(index, 1);
+            renderUpNextContent();
+        }
+
+        function jumpToUpNextAlbum(index) {
+            toggleModal('upNextModal', false);
+            playAlbumQueue(musicAlbumQueue, index);
+        }
+
+        function moveUpNextAlbum(index, delta) {
+            const target = index + delta;
+            if (target <= musicAlbumQueueIndex || target >= musicAlbumQueue.length) return;
+            [musicAlbumQueue[index], musicAlbumQueue[target]] = [musicAlbumQueue[target], musicAlbumQueue[index]];
+            renderUpNextContent();
+        }
+
+        function removeUpNextAlbum(index) {
+            if (index <= musicAlbumQueueIndex) return;
+            musicAlbumQueue.splice(index, 1);
+            renderUpNextContent();
+        }
+
+        // Jumping to a specific pending ("More Like This") item continues
+        // playing whatever was queued AFTER it as the new album queue,
+        // rather than discarding the rest of that pending list -- tapping
+        // one item to jump to it isn't the same as saying you only wanted
+        // that one.
+        function jumpToPendingAlbum(index) {
+            if (!pendingQueueAfterCurrentTrack) return;
+            const remaining = pendingQueueAfterCurrentTrack.slice(index);
+            toggleModal('upNextModal', false);
+            playAlbumQueue(remaining, 0);
+        }
+
+        function movePendingAlbum(index, delta) {
+            if (!pendingQueueAfterCurrentTrack) return;
+            const target = index + delta;
+            if (target < 0 || target >= pendingQueueAfterCurrentTrack.length) return;
+            [pendingQueueAfterCurrentTrack[index], pendingQueueAfterCurrentTrack[target]] = [pendingQueueAfterCurrentTrack[target], pendingQueueAfterCurrentTrack[index]];
+            renderUpNextContent();
+        }
+
+        function removePendingAlbum(index) {
+            if (!pendingQueueAfterCurrentTrack) return;
+            pendingQueueAfterCurrentTrack.splice(index, 1);
+            if (pendingQueueAfterCurrentTrack.length === 0) pendingQueueAfterCurrentTrack = null;
+            renderUpNextContent();
+        }
+
         // Shared by the native 'ended' event and the manual timeupdate-based
         // check below so a track can only trigger one advance -- without
         // this, a track that DOES fire a legitimate 'ended' right around
@@ -2314,6 +2753,26 @@
                 return;
             }
             musicPlayerHasAdvancedForCurrentTrack = true;
+
+            // Repeat-one: replay the same track instead of moving on.
+            // Deliberately only checked here (the funnel for the two
+            // AUTOMATIC end-of-track triggers), not inside miniPlayerNext()
+            // itself -- that function is also called directly by the
+            // manual ⏭ button, which should always move to the next track
+            // regardless of repeat-one, same as every other media player.
+            if (repeatMode === 'one') {
+                mvLog('advanceToNextTrackOnce: repeat-one, replaying, triggered by', reason);
+                const audio = document.getElementById('miniPlayerAudio');
+                audio.currentTime = 0;
+                audio.play().catch(() => {});
+                // Reset the guard now that this end-of-track event has been
+                // fully handled -- lets the replayed track trigger its own
+                // advance/repeat once IT ends, rather than being silently
+                // ignored forever after the first repeat.
+                musicPlayerHasAdvancedForCurrentTrack = false;
+                return;
+            }
+
             mvLog('advanceToNextTrackOnce: advancing, triggered by', reason);
             miniPlayerNext();
         }
@@ -2339,6 +2798,10 @@
             // track instead of playing it.
             if (audio.dataset.mvListenersAttached === 'true') return;
             audio.dataset.mvListenersAttached = 'true';
+            // Restores the volume you last set (setMiniPlayerVolume) --
+            // this <audio> element is reused across every track/album, so
+            // this only needs setting once here, not per-track.
+            audio.volume = getSavedVolume();
             audio.addEventListener('ended', () => {
                 mvLog('ended event fired! musicPlayerIndex', musicPlayerIndex, 'audio.currentTime', audio.currentTime, 'audio.duration', audio.duration, 'audio.src', audio.src);
                 advanceToNextTrackOnce('ended event');
@@ -2357,12 +2820,18 @@
                 // ~4x/second, not continuously) so this reliably trips
                 // before playback would otherwise run out of decoded audio
                 // and go silent.
+                updateMiniPlayerTimeDisplay(audio);
                 if (musicPlayerExpectedDuration === null) return;
                 if (audio.currentTime >= musicPlayerExpectedDuration - 0.75) {
                     mvLog('timeupdate: reached expected end. currentTime', audio.currentTime, 'expectedDuration', musicPlayerExpectedDuration);
                     advanceToNextTrackOnce('timeupdate near expected duration');
                 }
             });
+            // Local-folder playback (desktop) resolves a real audio.duration
+            // asynchronously after the track loads -- durationchange catches
+            // that so the time display picks up the real total as soon as
+            // it's known, rather than waiting for the first timeupdate tick.
+            audio.addEventListener('durationchange', () => updateMiniPlayerTimeDisplay(audio));
             audio.addEventListener('play', () => {
                 mvLog('play event fired. audio.src', audio.src, 'audio.currentTime', audio.currentTime);
                 updateMiniPlayerPlayPauseIcon();
@@ -3244,7 +3713,7 @@ async function autoSaveToMacDirectory() {
             else { modal.classList.add('hidden'); document.body.style.overflow = ''; }
         }
 
-        function closeModal(event) { if (['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal', 'loanModal', 'statsModal', 'duplicatesModal', 'playlistsModal', 'createPlaylistModal'].includes(event.target.id)) toggleModal(event.target.id, false); }
+        function closeModal(event) { if (['detailsModal', 'searchResultsModal', 'manualEntryModal', 'exportTextModal', 'loanModal', 'statsModal', 'duplicatesModal', 'playlistsModal', 'createPlaylistModal', 'recentlyPlayedModal', 'upNextModal', 'editPlaylistModal'].includes(event.target.id)) toggleModal(event.target.id, false); }
 
         function renderCollection() {
             updateStatsDashboard(); populateGenreFilterOptions(); populateFormatFilterOptions(); populateConditionFilterOptions();
@@ -3375,11 +3844,21 @@ async function autoSaveToMacDirectory() {
              Symphony" / "Urban Hymns". Splitting into two rows gives text
              nearly the bar's full width to work with. -->
         <div class="px-3 pt-2.5 pb-1 flex items-center gap-3">
-            <img id="miniPlayerCover" src="" alt="" class="w-11 h-11 rounded-md object-cover flex-shrink-0 bg-slate-950">
-            <div class="min-w-0 flex-grow">
-                <p id="miniPlayerTrackName" class="text-sm font-bold text-white truncate"></p>
-                <p id="miniPlayerAlbumInfo" class="text-xs text-slate-400 truncate"></p>
-            </div>
+            <!-- Cover art + track/album text are wrapped in one tappable
+                 button that jumps to the album's own detail page (same
+                 modal every album card elsewhere in the app opens) --
+                 previously a dead end with no way to get from "what's
+                 playing" back to the album itself. -->
+            <button onclick="jumpToPlayingAlbumDetails()" aria-label="View details for the album currently playing" class="min-w-0 flex-grow flex items-center gap-3 text-left">
+                <img id="miniPlayerCover" src="" alt="" class="w-11 h-11 rounded-md object-cover flex-shrink-0 bg-slate-950">
+                <div class="min-w-0 flex-grow">
+                    <p id="miniPlayerTrackName" class="text-sm font-bold text-white truncate"></p>
+                    <p id="miniPlayerAlbumInfo" class="text-xs text-slate-400 truncate"></p>
+                </div>
+            </button>
+            <!-- Elapsed/total time -- not a scrubber, see the comment
+                 further down about why the seek bar was removed. -->
+            <span id="miniPlayerTimeDisplay" class="text-[11px] text-slate-500 tabular-nums flex-shrink-0"></span>
         </div>
         <div class="px-3 pb-3 flex items-center justify-center gap-3 relative">
             <!-- Now that this row doesn't share space with the track/album
@@ -3393,8 +3872,16 @@ async function autoSaveToMacDirectory() {
             <button id="miniPlayerPlayPauseBtn" onclick="toggleMiniPlayerPlayPause()" aria-label="Play or pause" class="w-16 h-16 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-3xl flex items-center justify-center">▶</button>
             <button onclick="miniPlayerNext()" aria-label="Next track" class="w-14 h-14 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 text-2xl flex items-center justify-center">⏭</button>
             <button id="miniPlayerMoreBtn" onclick="toggleMiniPlayerMenu(event)" aria-label="More player actions" class="w-12 h-12 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 text-xl flex items-center justify-center ml-2">⋮</button>
-            <div id="miniPlayerMenu" class="hidden absolute bottom-full right-3 mb-2 w-52 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
-                <button onclick="playMoreLikeThis()" class="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-slate-700 flex items-center gap-2">🔀 More Like This</button>
+            <div id="miniPlayerMenu" class="hidden absolute bottom-full right-3 mb-2 w-64 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+                <button onclick="openUpNextModal()" class="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-slate-700 flex items-center gap-2">📋 Up Next</button>
+                <button id="miniPlayerRepeatBtn" onclick="cycleRepeatMode()" class="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-slate-700 flex items-center gap-2 border-t border-slate-700/60">🔁 Repeat: Off</button>
+                <div class="px-4 py-3 border-t border-slate-700/60">
+                    <label class="text-sm text-slate-200 flex items-center gap-2.5">
+                        <span>🔊</span>
+                        <input id="miniPlayerVolumeSlider" type="range" min="0" max="100" step="1" oninput="setMiniPlayerVolume(this.value)" class="flex-grow accent-indigo-500">
+                    </label>
+                </div>
+                <button onclick="playMoreLikeThis()" class="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-slate-700 flex items-center gap-2 border-t border-slate-700/60">🔀 More Like This</button>
                 <button onclick="openCreatePlaylistModal()" class="w-full text-left px-4 py-3 text-sm text-slate-200 hover:bg-slate-700 flex items-center gap-2 border-t border-slate-700/60">➕ Save as Playlist</button>
                 <button onclick="closeMiniPlayerMenu(); closeMiniPlayer()" class="w-full text-left px-4 py-3 text-sm text-rose-400 hover:bg-slate-700 flex items-center gap-2 border-t border-slate-700/60">✕ Close Player</button>
             </div>
