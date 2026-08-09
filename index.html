@@ -3275,8 +3275,8 @@ async function autoSaveToMacDirectory() {
         // bug (August 2026), unrelated to the audio.duration/FLAC work
         // elsewhere in this file. <div id="miniPlayerBar"> (and the
         // <audio id="miniPlayerAudio"> inside it) is defined further down
-        // in the raw HTML, AFTER this </script> tag closes -- so at the
-        // moment this line ran, during the browser's initial top-to-bottom
+        // in the raw HTML, after this script block's own closing tag -- so
+        // at the moment this line ran, during the browser's initial top-to-bottom
         // parse, that element didn't exist in the DOM yet.
         // document.getElementById('miniPlayerAudio') returned null, and the
         // very first addEventListener call inside setupMiniPlayerEvents()
