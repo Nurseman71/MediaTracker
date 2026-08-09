@@ -2101,16 +2101,45 @@
             playAlbumQueue(shuffleArray(allMusic), 0);
         }
 
-        // Genre-overlap matching -- shares at least one genre tag with
-        // `item`, same idea as the existing genre filter dropdown already
-        // uses elsewhere in the app, just applied item-to-item instead of
-        // item-to-selected-filter.
+        // These are automatic fallback values this app writes into
+        // item.genres when a real genre couldn't be determined -- not
+        // actual genre information. Two places write them: the iTunes
+        // album lookup falls back to ['Music'] when the API result has no
+        // primaryGenreName, and the data-migration backfill assigns
+        // ['Music']/['Movie']/['TV Show'] to any legacy item that somehow
+        // ended up with zero genres at all. Confirmed directly (August
+        // 2026): enough music items in the real library ended up tagged
+        // just "Music" through one or both of these paths that "More Like
+        // This" was effectively matching at random across the whole
+        // collection -- a Pat Benatar album and an unrelated Christmas
+        // compilation matched purely because they both had the generic
+        // "Music" tag, nothing more specific in common at all.
+        const GENERIC_GENRE_PLACEHOLDERS = new Set(['music', 'movie', 'tv show']);
+
+        // Real, meaningful genre tags only -- strips the placeholders
+        // above so an item whose only tag is a generic fallback is treated
+        // as having no real genre info (matches nothing, is matched by
+        // nothing), not as if "Music" were a genuine, matchable genre.
+        // Deliberately doesn't touch what's actually stored in
+        // item.genres -- other things in this app (the genre filter
+        // dropdown, CSV export, stats counts) still show the generic tag
+        // as-is, which is harmless there; this only affects "similar
+        // music" matching, which is where a meaningless universal match
+        // actually caused a real, user-visible bug.
+        function realGenres(item) {
+            return (item.genres || []).filter(g => !GENERIC_GENRE_PLACEHOLDERS.has(g.toLowerCase()));
+        }
+
+        // Genre-overlap matching -- shares at least one REAL genre tag
+        // with `item` (see realGenres() above), same idea as the existing
+        // genre filter dropdown already uses elsewhere in the app, just
+        // applied item-to-item instead of item-to-selected-filter.
         function findSimilarMusic(item) {
-            const genres = new Set((item.genres || []).map(g => g.toLowerCase()));
+            const genres = new Set(realGenres(item).map(g => g.toLowerCase()));
             if (genres.size === 0) return [];
             return collection.filter(other =>
                 other.type === 'music' && !other.wishlist && other.id !== item.id &&
-                (other.genres || []).some(g => genres.has(g.toLowerCase()))
+                realGenres(other).some(g => genres.has(g.toLowerCase()))
             );
         }
 
@@ -2121,7 +2150,7 @@
             }
             const similar = findSimilarMusic(musicPlayerItem);
             if (similar.length === 0) {
-                const genreList = (musicPlayerItem.genres || []).join(', ') || 'no genre tagged';
+                const genreList = realGenres(musicPlayerItem).join(', ') || 'no real genre tagged';
                 alert(`Nothing else in your vault shares a genre with "${musicPlayerItem.title}" (${genreList}).`);
                 return;
             }
@@ -2168,7 +2197,7 @@
             }
             const similar = findSimilarMusic(musicPlayerItem);
             if (similar.length === 0) {
-                const genreList = (musicPlayerItem.genres || []).join(', ') || 'no genre tagged';
+                const genreList = realGenres(musicPlayerItem).join(', ') || 'no real genre tagged';
                 alert(`Nothing else in your vault shares a genre with "${musicPlayerItem.title}" (${genreList}) to build a playlist from.`);
                 return;
             }
