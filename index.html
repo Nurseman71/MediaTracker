@@ -3289,9 +3289,14 @@ async function autoSaveToMacDirectory() {
         // immediately if the document has, for whatever reason, already
         // finished loading by the time this line executes) guarantees the
         // element exists first.
+        mvLog('mini player setup call site reached. document.readyState =', document.readyState);
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', setupMiniPlayerEvents);
+            document.addEventListener('DOMContentLoaded', () => {
+                mvLog('DOMContentLoaded fired -- calling setupMiniPlayerEvents() now');
+                setupMiniPlayerEvents();
+            });
         } else {
+            mvLog('readyState was not "loading" at call time -- calling setupMiniPlayerEvents() immediately');
             setupMiniPlayerEvents();
         }
     </script>
