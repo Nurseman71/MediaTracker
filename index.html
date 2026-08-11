@@ -24,14 +24,24 @@
          URLs, which default-src's plain 'self' does not cover on its own. media-src
          also allows the same Tailscale tailnet wildcard connect-src already does, so
          devices without File System Access API support (iPhone Safari) can stream
-         audio from the Remote Sync server's /media/ endpoint instead. -->
+         audio from the Remote Sync server's /media/ endpoint instead. Both wildcards
+         end in ":*" (any port), not just the bare hostname — a host-source with no
+         port only matches the scheme's default port (443), so when the sync server
+         moved to a dedicated port (August 2026, to stop other Tailscale-served apps
+         on this Mac from silently stealing the default route) requests to that port
+         were being CSP-blocked even though the URL/token were both correct. Confirmed
+         directly: fetch() failed with a `securitypolicyviolation` event whose
+         `violatedDirective` was `connect-src`, even though direct browser navigation
+         to the same URL worked fine — that mismatch (works when navigated to
+         directly, fails when fetched from the page) is the tell for this specific
+         cause. -->
     <meta http-equiv="Content-Security-Policy" content="
         default-src 'self';
         script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com;
         style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;
         img-src 'self' https: data: blob:;
-        media-src 'self' blob: https://*.tail83b8fe.ts.net;
-        connect-src 'self' https://www.omdbapi.com https://itunes.apple.com https://*.tail83b8fe.ts.net;
+        media-src 'self' blob: https://*.tail83b8fe.ts.net:*;
+        connect-src 'self' https://www.omdbapi.com https://itunes.apple.com https://*.tail83b8fe.ts.net:*;
         object-src 'none';
         base-uri 'self';
         form-action 'self';
