@@ -1043,6 +1043,52 @@
             if (headerStatusEl) headerStatusEl.textContent = text;
         }
 
+        // One fetch, wrapped so a failure says WHICH call failed and WHY.
+        //
+        // This exists because of the 2026-09-11 Remote Sync outage. Both
+        // calls used to sit in one try with `await fetch(...)` directly, and
+        // fetch() REJECTS (rather than returning a status) on DNS failure, a
+        // refused connection, a TLS problem, or a server that dies
+        // mid-request — with the message "Failed to fetch" and no status
+        // code at all. That is exactly what an unhandled exception in the
+        // server's do_POST produces: the connection closes with no response.
+        // So the status line read "Sync failed: Failed to fetch" whether the
+        // download or the upload had died, and most of that day went into
+        // working out which.
+        //
+        // Three things it now distinguishes, which the old code could not:
+        //   * WHICH call        — the phase is in the message
+        //   * transport vs HTTP — "could not reach the server" is a different
+        //                         sentence from "server returned 503"
+        //   * the server's own reason — /api/collection answers 503 with
+        //                         {"error": "Catalog unreadable - refusing to
+        //                         write"} since 5caf5b8, and that sentence is
+        //                         worth far more than the bare number
+        //
+        // doFetch is injectable purely so this is testable outside a browser.
+        async function syncFetch(phase, url, options, doFetch) {
+            const f = doFetch || fetch;
+            let response;
+            try {
+                response = await f(url, options);
+            } catch (netErr) {
+                throw new Error(`${phase}: could not reach the server (${netErr.message})`);
+            }
+            if (!response.ok) {
+                let detail = '';
+                try {
+                    const body = await response.json();
+                    if (body && body.error) detail = ` — ${body.error}`;
+                } catch (ignored) {
+                    // A non-JSON error body is normal; the status still tells
+                    // us something, so this must not become the failure.
+                }
+                if (!detail && response.status === 401) detail = ' — check the sync token';
+                throw new Error(`${phase}: server returned ${response.status}${detail}`);
+            }
+            return response;
+        }
+
         async function remoteSyncNow() {
             if (remoteSyncInFlight) return;
             const url = document.getElementById('remoteSyncUrl').value.trim().replace(/\/$/, '');
@@ -1073,10 +1119,7 @@
                 // custom headers sidesteps the whole category of bug.
                 const encodedToken = encodeURIComponent(token);
 
-                const getResponse = await fetch(`${url}/api/collection?token=${encodedToken}`);
-                if (!getResponse.ok) {
-                    throw new Error(`Server returned ${getResponse.status} — check the URL and token.`);
-                }
+                const getResponse = await syncFetch('download', `${url}/api/collection?token=${encodedToken}`);
                 const remote = await getResponse.json();
                 const remoteLastModified = remote.lastModified || 0;
 
@@ -1162,19 +1205,24 @@
                     lastModified: Date.now(),
                     tombstones: deletedTombstones
                 };
-                const postResponse = await fetch(`${url}/api/collection?token=${encodedToken}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'text/plain' },
-                    body: JSON.stringify(putBody)
-                });
-                if (!postResponse.ok) {
-                    throw new Error(`Synced down, but pushing back up failed (${postResponse.status}).`);
-                }
+                // The phase names the consequence, not just the step: if this
+                // half fails, THIS device already holds the server's data and
+                // the server does not hold this device's.
+                await syncFetch('upload, after a successful download',
+                    `${url}/api/collection?token=${encodedToken}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'text/plain' },
+                        body: JSON.stringify(putBody)
+                    });
 
                 const now = new Date().toLocaleTimeString();
                 setRemoteSyncStatus(`Synced successfully at ${now}.`);
             } catch (err) {
-                setRemoteSyncStatus(`Sync failed: ${err.message}`);
+                // err.message already names the phase whenever the failure was
+                // one of the two network calls (see syncFetch). A message with
+                // NO phase prefix therefore means the merge itself threw —
+                // local, not transport — which is itself the useful signal.
+                setRemoteSyncStatus(`Sync failed — ${err.message}`);
             } finally {
                 btn.disabled = false;
                 btn.textContent = '🔄 Sync Now';
